@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Control - Gantt Prototype</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div>
+        <div class="app-title">Project Control</div>
+        <div class="project-title">社内基幹システム刷新</div>
+      </div>
+      <div class="project-summary">
+        <span>2026/10/01 - 2027/03/31</span>
+        <span>進捗 <strong>42%</strong></span>
+        <span>最終更新 10/14 13:40</span>
+      </div>
+    </header>
+
+    <section class="toolbar">
+      <div class="toolbar-group">
+        <button id="prevPeriod" class="button subtle">←</button>
+        <button id="todayButton" class="button subtle">今日</button>
+        <button id="nextPeriod" class="button subtle">→</button>
+        <div class="segmented">
+          <button id="dayViewButton" class="segment active">日</button>
+          <button id="weekViewButton" class="segment">週</button>
+        </div>
+      </div>
+
+      <div class="toolbar-group filters">
+        <select id="assigneeFilter">
+          <option value="all">担当者：すべて</option>
+          <option value="佐藤">佐藤</option>
+          <option value="田中">田中</option>
+          <option value="鈴木">鈴木</option>
+        </select>
+        <select id="statusFilter">
+          <option value="all">状態：すべて</option>
+          <option value="未着手">未着手</option>
+          <option value="進行中">進行中</option>
+          <option value="完了">完了</option>
+          <option value="保留">保留</option>
+        </select>
+        <label class="checkbox-label"><input id="delayOnly" type="checkbox"> 遅延のみ</label>
+      </div>
+
+      <div class="toolbar-group toolbar-right">
+        <button id="expandAll" class="button subtle">すべて展開</button>
+        <button id="collapseAll" class="button subtle">すべて折りたたみ</button>
+        <button id="addTaskButton" class="button primary">＋ タスク追加</button>
+      </div>
+    </section>
+
+    <main class="gantt-layout">
+      <section class="task-pane">
+        <div class="task-header grid-row">
+          <div class="task-name-cell">タスク名</div>
+          <div>担当</div>
+          <div>進捗</div>
+          <div>状態</div>
+        </div>
+        <div id="taskRows" class="task-body"></div>
+      </section>
+
+      <section id="timelinePane" class="timeline-pane">
+        <div id="timelineHeader" class="timeline-header"></div>
+        <div id="timelineRows" class="timeline-body"></div>
+      </section>
+    </main>
+
+    <aside id="editPanel" class="edit-panel" aria-hidden="true">
+      <div class="edit-panel-header">
+        <div>
+          <div class="panel-kicker">タスク編集</div>
+          <h2 id="panelTitle">タスク名</h2>
+        </div>
+        <button id="closePanel" class="icon-button" aria-label="閉じる">×</button>
+      </div>
+
+      <form id="taskForm" class="edit-form">
+        <label>タスク名<input id="taskNameInput" type="text"></label>
+        <div class="form-two-columns">
+          <label>担当者<select id="assigneeInput"><option>佐藤</option><option>田中</option><option>鈴木</option></select></label>
+          <label>状態<select id="statusInput"><option>未着手</option><option>進行中</option><option>完了</option><option>保留</option></select></label>
+        </div>
+        <label>進捗率<div class="progress-input"><input id="progressInput" type="range" min="0" max="100" step="5"><span id="progressValue">0%</span></div></label>
+        <div class="form-two-columns">
+          <label>計画開始<input id="plannedStartInput" type="date"></label>
+          <label>計画終了<input id="plannedEndInput" type="date"></label>
+        </div>
+        <div class="form-two-columns">
+          <label>実績開始<input id="actualStartInput" type="date"></label>
+          <label>実績終了<input id="actualEndInput" type="date"></label>
+        </div>
+        <label>備考<textarea id="noteInput" rows="5"></textarea></label>
+        <div id="formMessage" class="form-message"></div>
+        <div class="panel-actions">
+          <button type="button" id="deleteTaskButton" class="button danger">削除</button>
+          <div class="actions-right">
+            <button type="button" id="cancelButton" class="button subtle">キャンセル</button>
+            <button type="submit" class="button primary">保存</button>
+          </div>
+        </div>
+      </form>
+    </aside>
+
+    <div id="panelBackdrop" class="panel-backdrop"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
