@@ -22,26 +22,51 @@ jobs:
       - name: Install clasp
         run: npm install -g @google/clasp@3.4.1
 
-      - name: Validate secret
+      - name: Validate OAuth secrets
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          GAS_CLIENT_ID: ${{ secrets.GAS_CLIENT_ID }}
+          GAS_CLIENT_SECRET: ${{ secrets.GAS_CLIENT_SECRET }}
+          GAS_REFRESH_TOKEN: ${{ secrets.GAS_REFRESH_TOKEN }}
         run: |
-          if [ -z "$CLASPRC_JSON" ]; then
-            echo "CLASPRC_JSON secret is not configured."
+          missing=0
+          for name in GAS_CLIENT_ID GAS_CLIENT_SECRET GAS_REFRESH_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "$name secret is not configured."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
             exit 1
           fi
 
-      - name: Restore clasp credentials
+      - name: Build clasp credentials
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          GAS_CLIENT_ID: ${{ secrets.GAS_CLIENT_ID }}
+          GAS_CLIENT_SECRET: ${{ secrets.GAS_CLIENT_SECRET }}
+          GAS_REFRESH_TOKEN: ${{ secrets.GAS_REFRESH_TOKEN }}
         run: |
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          jq -n \
+            --arg clientId "$GAS_CLIENT_ID" \
+            --arg clientSecret "$GAS_CLIENT_SECRET" \
+            --arg refreshToken "$GAS_REFRESH_TOKEN" \
+            '{
+              oauth2ClientSettings: {
+                clientId: $clientId,
+                clientSecret: $clientSecret,
+                redirectUri: "https://developers.google.com/oauthplayground"
+              },
+              token: {
+                refresh_token: $refreshToken,
+                token_type: "Bearer"
+              },
+              isLocalCreds: true
+            }' > "$HOME/.clasprc.json"
           chmod 600 "$HOME/.clasprc.json"
 
       - name: Validate GAS source
         run: |
           if [ ! -f "src/appsscript.json" ]; then
-            echo "src/appsscript.json is missing. Run clasp pull locally once and commit the GAS source under src/."
+            echo "src/appsscript.json is missing."
             exit 1
           fi
 
