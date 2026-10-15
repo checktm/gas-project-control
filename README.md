@@ -1,14 +1,7 @@
 # gas-project-control
 
-PM向けのプロジェクト進捗管理資料を、Google Apps Script（GAS）とGoogleスプレッドシートを使ったWebアプリとして運用するためのリポジトリです。
-
-## 目的
-
-- PMが進捗状況を一画面で把握できること
-- タスク、工程、担当者、期限、進捗率、課題、リスクを一元管理できること
-- ガントチャートや期限超過・遅延の可視化を行えること
-- 進捗会議でそのまま利用できる情報を整理できること
-- 既存の進捗管理資料を置き換えつつ、入力負荷を増やさないこと
+Google Apps Script（GAS）とGoogleスプレッドシートを使った軽量な業務管理Webアプリです。
+問い合わせ管理を先行実装し、進捗管理などの業務機能を段階的に追加します。
 
 ## 想定構成
 
@@ -17,38 +10,43 @@ PM向けのプロジェクト進捗管理資料を、Google Apps Script（GAS）
 - データ保存: Googleスプレッドシート
 - バージョン管理: GitHub
 
-## 初期スコープ
-
-1. プロジェクト／案件の管理
-2. 工程・タスクの管理
-3. 担当者の管理
-4. 計画開始日・終了日、実績開始日・終了日の管理
-5. 進捗率・ステータス管理
-6. 課題・リスク・次回アクション・PMコメント管理
-7. ガントチャート表示
-8. 遅延・期限超過の強調表示
-9. プロジェクト全体の進捗サマリー
-
 ## デプロイ環境
 
 同一の `src/` を、開発環境と顧客本番環境へ分けてデプロイする。
 
 ### Development
 
-GitHub Actions の `Deploy Development` を手動実行する。
+`main` の `src/**` などが更新されると、GitHub Actions の `Deploy Development` が自動実行される。
 
-- Apps Script: 現在の開発用GAS
-- Spreadsheet: 開発用 `gas-project-control`
-- OAuth Secrets:
-  - `GAS_CLIENT_ID`
-  - `GAS_CLIENT_SECRET`
-  - `GAS_REFRESH_TOKEN`
+処理内容:
+
+1. 開発用Spreadsheet IDをソースへ注入
+2. `clasp push --force` でApps Scriptソースを更新
+3. Apps Scriptの新しいVersionを作成
+4. 既存の開発WebアプリDeploymentをそのVersionへ更新
+
+これにより、開発Webアプリの `/exec` URLを変えずに最新コードへ自動更新する。
+手動 `workflow_dispatch` は障害時の再実行用として残す。
+
+開発環境で必要なSecrets:
+
+- `GAS_CLIENT_ID`
+- `GAS_CLIENT_SECRET`
+- `GAS_REFRESH_TOKEN`
+- `DEV_GAS_DEPLOYMENT_ID`
+
+OAuth Refresh Tokenには少なくとも以下のApps Script APIスコープが必要:
+
+- `https://www.googleapis.com/auth/script.projects`
+- `https://www.googleapis.com/auth/script.deployments`
+
+`DEV_GAS_DEPLOYMENT_ID` は Apps Script の「デプロイ > デプロイを管理」で、開発用WebアプリのDeployment IDを確認して登録する。
 
 開発用の `.clasp.json` はリポジトリに保持する。
 
 ### Production
 
-GitHub Actions の `Deploy Production` を手動実行する。
+GitHub Actions の `Deploy Production` は手動実行する。
 本番用の識別子・認証情報はリポジトリへ保存せず、GitHub Secretsのみで管理する。
 
 必要なSecrets:
@@ -60,6 +58,8 @@ GitHub Actions の `Deploy Production` を手動実行する。
 - `PROD_SPREADSHEET_ID`
 
 1つでも未設定の場合、本番デプロイは停止する。
+
+現時点の本番WorkflowはApps Scriptソース更新までを対象とする。WebアプリVersion/Deployment更新の自動化は、開発環境での運用確認後に適用する。
 
 ### 環境固有設定
 
@@ -76,7 +76,7 @@ GitHub Actions の `Deploy Production` を手動実行する。
 2. 顧客Google Drive内の管理用Spreadsheet
 3. 顧客側Google Cloud OAuthクライアント
 4. 顧客Googleアカウントで取得したRefresh Token
-5. 上記5つの `PROD_*` SecretsをGitHubへ登録
+5. 必要な `PROD_*` SecretsをGitHubへ登録
 
 顧客PCへのNode.js / clasp / Gitの常設インストールは不要とし、デプロイ処理はGitHub Actions上で実行する。
 
