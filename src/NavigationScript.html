@@ -40,10 +40,6 @@ function ensureInquiryAiSummaryUi(){
   controls.innerHTML='<button type="button" id="generateInquirySummaryButton" class="button subtle">AIで要約</button><span id="aiSummaryStatus" class="ai-summary-status">Geminiで概要候補を作成します</span>';
   label.parentNode.insertBefore(controls,label.nextSibling);
 
-  const style=document.createElement('style');
-  style.textContent='.ai-summary-controls{display:flex;align-items:center;gap:10px;margin-top:-4px}.ai-summary-controls .button{padding:7px 11px}.ai-summary-status{font-size:11px;color:#64748b}.ai-summary-status.success{color:#166534}.ai-summary-status.error{color:#b91c1c}';
-  document.head.appendChild(style);
-
   $('generateInquirySummaryButton').onclick=generateInquirySummaryCandidate;
 }
 
@@ -79,12 +75,152 @@ function generateInquirySummaryCandidate(){
     .generateInquirySummary(inquiry.id);
 }
 
+function ensureInquiryReplyUi(){
+  if($('inquiryReplyBody'))return;
+  const messageSection=document.querySelector('#inquiryDetailContent .message-section');
+  if(!messageSection)return;
+
+  const section=document.createElement('section');
+  section.className='inquiry-reply-section';
+  section.innerHTML='\
+    <div class="section-heading inquiry-reply-heading">\
+      <div><h3>返信</h3><span id="inquiryReplyRecipient" class="reply-recipient">宛先を確認中</span></div>\
+    </div>\
+    <textarea id="inquiryReplyBody" class="reply-textarea" rows="5" placeholder="顧客への返信内容を入力"></textarea>\
+    <div class="reply-actions">\
+      <span id="inquiryReplyStatus" class="reply-status"></span>\
+      <button type="button" id="sendInquiryReplyButton" class="button primary" disabled>返信を送信</button>\
+    </div>';
+  messageSection.parentNode.insertBefore(section,messageSection);
+
+  $('sendInquiryReplyButton').onclick=sendInquiryReplyFromScreen;
+  $('inquiryReplyBody').oninput=updateInquiryReplyUi;
+}
+
+function getLatestInboundMessageForReply(){
+  const id=String(inquiryState.selectedId||'');
+  if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))return null;
+  const messages=inquiryState.messagesByInquiry[id]||[];
+  for(let i=messages.length-1;i>=0;i-=1){
+    if(String(messages[i].direction||'INBOUND').toUpperCase()==='INBOUND')return messages[i];
+  }
+  return null;
+}
+
+function updateInquiryReplyUi(){
+  if(!$('inquiryReplyBody'))return;
+  const inquiry=findInquiry(inquiryState.selectedId);
+  const recipient=$('inquiryReplyRecipient');
+  const button=$('sendInquiryReplyButton');
+  const body=String($('inquiryReplyBody').value||'').trim();
+
+  if(!inquiry){
+    recipient.textContent='問い合わせを選択してください';
+    button.disabled=true;
+    return;
+  }
+  if(inquiryState.messageLoadingId===inquiry.id){
+    recipient.textContent='返信先を確認中...';
+    button.disabled=true;
+    return;
+  }
+  const inbound=getLatestInboundMessageForReply();
+  if(!inbound){
+    recipient.textContent='返信可能な受信メールがありません';
+    button.disabled=true;
+    return;
+  }
+  const to=String(inbound.fromEmail||inquiry.contactEmail||'');
+  recipient.textContent='宛先: '+(to||'不明');
+  button.disabled=!body||!to;
+}
+
+function clearReplyDraftForInquiryChange(){
+  if($('inquiryReplyBody'))$('inquiryReplyBody').value='';
+  if($('inquiryReplyStatus')){
+    $('inquiryReplyStatus').textContent='';
+    $('inquiryReplyStatus').className='reply-status';
+  }
+}
+
+function sendInquiryReplyFromScreen(){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  const inbound=getLatestInboundMessageForReply();
+  if(!inquiry||!inbound)return;
+  const body=String($('inquiryReplyBody').value||'').trim();
+  if(!body)return;
+  const recipient=String(inbound.fromEmail||inquiry.contactEmail||'');
+  if(!window.confirm(recipient+' に返信を送信します。\n\n送信後は取り消せません。よろしいですか？'))return;
+
+  const button=$('sendInquiryReplyButton');
+  const status=$('inquiryReplyStatus');
+  button.disabled=true;
+  button.textContent='送信中...';
+  status.className='reply-status';
+  status.textContent='Gmailから返信しています...';
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      button.textContent='返信を送信';
+      $('inquiryReplyBody').value='';
+      if(result&&Array.isArray(result.messages))inquiryState.messagesByInquiry[inquiry.id]=result.messages;
+      if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+      renderInquiryScreen();
+      status.className='reply-status success';
+      status.textContent='返信を送信しました。';
+      updateInquiryReplyUi();
+      if(typeof loadDashboardData==='function')loadDashboardData(true);
+    })
+    .withFailureHandler(function(error){
+      button.textContent='返信を送信';
+      status.className='reply-status error';
+      status.textContent='送信に失敗しました。'+(error&&error.message?error.message:String(error));
+      updateInquiryReplyUi();
+    })
+    .sendInquiryReply({inquiryId:inquiry.id,body:body});
+}
+
+function installInquiryEnhancementStyles(){
+  if(document.getElementById('inquiryEnhancementStyles'))return;
+  const style=document.createElement('style');
+  style.id='inquiryEnhancementStyles';
+  style.textContent='\
+    .ai-summary-controls{display:flex;align-items:center;gap:10px;margin-top:-4px}\
+    .ai-summary-controls .button{padding:7px 11px}\
+    .ai-summary-status{font-size:11px;color:#64748b}\
+    .ai-summary-status.success,.reply-status.success{color:#166534}\
+    .ai-summary-status.error,.reply-status.error{color:#b91c1c}\
+    .inquiry-reply-section{margin-top:18px;padding:16px;border-radius:14px;background:rgba(255,255,255,.56);box-shadow:inset 2px 2px 5px rgba(148,163,184,.16),inset -2px -2px 5px rgba(255,255,255,.8)}\
+    .inquiry-reply-heading{margin-bottom:8px}.inquiry-reply-heading>div{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}\
+    .reply-recipient{font-size:11px;color:#64748b}.reply-textarea{width:100%;min-height:110px;resize:vertical;box-sizing:border-box}\
+    .reply-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px}.reply-status{font-size:11px;color:#64748b;min-height:16px}\
+  ';
+  document.head.appendChild(style);
+}
+
+const originalRenderInquiryDetail=window.renderInquiryDetail;
+window.renderInquiryDetail=function(){
+  originalRenderInquiryDetail();
+  ensureInquiryAiSummaryUi();
+  ensureInquiryReplyUi();
+  updateInquiryReplyUi();
+};
+
+const originalSelectInquiry=window.selectInquiry;
+window.selectInquiry=function(id){
+  if(String(inquiryState.selectedId||'')!==String(id||''))clearReplyDraftForInquiryChange();
+  originalSelectInquiry(id);
+  updateInquiryReplyUi();
+};
+
 $('navDashboard').onclick=function(){switchMainView('dashboard')};
 $('navInquiries').onclick=function(){switchMainView('inquiries')};
 $('navMasters').onclick=function(){switchMainView('masters')};
 $('refreshDashboard').onclick=function(){loadDashboardData(true)};
 $('dashboardRecent').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(row)openDashboardInquiry(row.dataset.inquiryId)};
 
+installInquiryEnhancementStyles();
 ensureInquiryAiSummaryUi();
+ensureInquiryReplyUi();
 switchMainView('dashboard');
 </script>
