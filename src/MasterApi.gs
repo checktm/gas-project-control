@@ -1,9 +1,27 @@
-const MASTER_SETTING_KEYS = [
-  'INQUIRY_GROUP_ADDRESS',
-  'MAIL_SEARCH_QUERY',
-  'MAIL_IMPORT_MAX_THREADS',
-  'MAIL_IMPORT_ENABLED'
+const MASTER_SETTING_DEFINITIONS = [
+  {
+    key: 'INQUIRY_GROUP_ADDRESS',
+    defaultValue: '',
+    description: '問い合わせ受付用Googleグループのメールアドレス。'
+  },
+  {
+    key: 'MAIL_SEARCH_QUERY',
+    defaultValue: 'to:{GROUP_ADDRESS} newer_than:30d',
+    description: 'Gmail検索条件。{GROUP_ADDRESS} は問い合わせ受付アドレスへ置換します。'
+  },
+  {
+    key: 'MAIL_IMPORT_MAX_THREADS',
+    defaultValue: '50',
+    description: '1回の取込処理で検索する最大スレッド数。'
+  },
+  {
+    key: 'MAIL_IMPORT_ENABLED',
+    defaultValue: 'FALSE',
+    description: 'TRUEの場合のみメール自動取込を実行します。'
+  }
 ];
+
+const MASTER_SETTING_KEYS = MASTER_SETTING_DEFINITIONS.map(function(item) { return item.key; });
 
 /**
  * マスタ管理画面の初期表示データを返す。
@@ -16,17 +34,32 @@ function getMasterScreenData() {
     contacts: readSheetObjects_(requireSheet_(spreadsheet, 'CustomerContacts')).map(serializeContactMaster_),
     members: readSheetObjects_(requireSheet_(spreadsheet, 'Members')).map(serializeMemberMaster_),
     categories: readSheetObjects_(categorySheet).map(serializeCategoryMaster_).sort(sortByDisplayOrder_),
-    settings: readSheetObjects_(requireSheet_(spreadsheet, 'Settings'))
-      .filter(function(row) { return MASTER_SETTING_KEYS.indexOf(String(row.setting_key || '')) >= 0; })
-      .map(function(row) {
-        return {
-          key: String(row.setting_key || ''),
-          value: String(row.setting_value == null ? '' : row.setting_value),
-          description: String(row.description || ''),
-          updatedAt: formatDateForClient_(row.updated_at, "yyyy-MM-dd'T'HH:mm:ss")
-        };
-      })
+    settings: buildSystemSettingsForScreen_(requireSheet_(spreadsheet, 'Settings'))
   };
+}
+
+/**
+ * 画面で管理可能な設定は、Settingsシートの状態にかかわらず必ず返す。
+ * シートに値が存在する場合はその値・説明を優先する。
+ */
+function buildSystemSettingsForScreen_(sheet) {
+  const rows = readSheetObjects_(sheet);
+  const rowByKey = {};
+  rows.forEach(function(row) {
+    const key = String(row.setting_key || '').trim();
+    if (key) rowByKey[key] = row;
+  });
+
+  return MASTER_SETTING_DEFINITIONS.map(function(definition) {
+    const row = rowByKey[definition.key] || {};
+    const hasValue = Object.prototype.hasOwnProperty.call(row, 'setting_value') && row.setting_value !== '';
+    return {
+      key: definition.key,
+      value: String(hasValue ? row.setting_value : definition.defaultValue),
+      description: String(row.description || definition.description),
+      updatedAt: formatDateForClient_(row.updated_at, "yyyy-MM-dd'T'HH:mm:ss")
+    };
+  });
 }
 
 function saveCustomerMaster(input) {
@@ -120,9 +153,15 @@ function saveSystemSetting(input) {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const sheet = requireSheet_(spreadsheet, 'Settings');
   const rows = readSheetObjects_(sheet);
-  const row = rows.find(function(item) { return String(item.setting_key || '') === key; });
-  if (!row) throw new Error('設定が見つかりません: ' + key);
-  writeRowUpdates_(sheet, row._rowIndex, { setting_value: value, updated_at: new Date() });
+  let row = rows.find(function(item) { return String(item.setting_key || '') === key; });
+
+  // 画面定義に存在する設定がシートから欠けている場合は、その場で補完する。
+  if (!row) {
+    const definition = MASTER_SETTING_DEFINITIONS.find(function(item) { return item.key === key; });
+    sheet.appendRow([key, value, definition ? definition.description : '', new Date()]);
+  } else {
+    writeRowUpdates_(sheet, row._rowIndex, { setting_value: value, updated_at: new Date() });
+  }
   return getMasterScreenData();
 }
 
