@@ -5,7 +5,7 @@ function generateInquirySummary(inquiryId) {
 
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const settings = readAiSettings_(spreadsheet);
-  if (!settings.enabled) throw new Error('AI要約機能は無効です。システム設定で有効にしてください。');
+  if (!settings.enabled) throw new Error('AI要約機能は無効です。');
 
   const inquiry = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries)).find(function(row) {
     return String(row.inquiry_id || '') === id;
@@ -50,7 +50,9 @@ function readAiSettings_(spreadsheet) {
   });
   const n = Number(values.GEMINI_MAX_INPUT_CHARS || '30000');
   return {
-    enabled: String(values.GEMINI_AI_ENABLED || 'FALSE').toUpperCase() === 'TRUE',
+    enabled: Object.prototype.hasOwnProperty.call(values, 'GEMINI_AI_ENABLED')
+      ? String(values.GEMINI_AI_ENABLED).toUpperCase() === 'TRUE'
+      : true,
     model: values.GEMINI_MODEL || 'gemini-3.8-flash',
     maxInputChars: Number.isFinite(n) && n >= 1000 ? Math.floor(n) : 30000
   };
