@@ -35,10 +35,12 @@ function generateInquirySummary(inquiryId) {
     history
   ].join('\n');
 
+  const generated = generateGeminiTextWithMeta_(prompt, settings.model, settings.fallbackModel);
   return {
-    summary: generateGeminiText_(prompt, settings.model),
+    summary: generated.text,
     generatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss"),
-    model: settings.model
+    model: generated.model,
+    fallbackUsed: generated.fallbackUsed
   };
 }
 
@@ -54,6 +56,7 @@ function readAiSettings_(spreadsheet) {
       ? String(values.GEMINI_AI_ENABLED).toUpperCase() === 'TRUE'
       : true,
     model: values.GEMINI_MODEL || 'gemini-3.8-flash',
+    fallbackModel: values.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
     maxInputChars: Number.isFinite(n) && n >= 1000 ? Math.floor(n) : 30000
   };
 }
