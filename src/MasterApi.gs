@@ -1,0 +1,191 @@
+const MASTER_SETTING_KEYS = [
+  'INQUIRY_GROUP_ADDRESS',
+  'MAIL_SEARCH_QUERY',
+  'MAIL_IMPORT_MAX_THREADS',
+  'MAIL_IMPORT_ENABLED'
+];
+
+/**
+ * マスタ管理画面の初期表示データを返す。
+ */
+function getMasterScreenData() {
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const categorySheet = ensureInquiryCategorySheet_(spreadsheet);
+  return {
+    customers: readSheetObjects_(requireSheet_(spreadsheet, 'Customers')).map(serializeCustomerMaster_),
+    contacts: readSheetObjects_(requireSheet_(spreadsheet, 'CustomerContacts')).map(serializeContactMaster_),
+    members: readSheetObjects_(requireSheet_(spreadsheet, 'Members')).map(serializeMemberMaster_),
+    categories: readSheetObjects_(categorySheet).map(serializeCategoryMaster_).sort(sortByDisplayOrder_),
+    settings: readSheetObjects_(requireSheet_(spreadsheet, 'Settings'))
+      .filter(function(row) { return MASTER_SETTING_KEYS.indexOf(String(row.setting_key || '')) >= 0; })
+      .map(function(row) {
+        return {
+          key: String(row.setting_key || ''),
+          value: String(row.setting_value == null ? '' : row.setting_value),
+          description: String(row.description || ''),
+          updatedAt: formatDateForClient_(row.updated_at, "yyyy-MM-dd'T'HH:mm:ss")
+        };
+      })
+  };
+}
+
+function saveCustomerMaster(input) {
+  input = input || {};
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const sheet = requireSheet_(spreadsheet, 'Customers');
+  const name = String(input.name || '').trim();
+  if (!name) throw new Error('顧客名は必須です。');
+  const id = saveMasterRow_(sheet, 'customer_id', String(input.id || ''), 'CUS', {
+    customer_name: name,
+    domain: normalizeDomain_(input.domain),
+    status: String(input.status || 'ACTIVE') === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+    note: String(input.note || ''),
+    updated_at: new Date()
+  });
+  return { id: id, data: getMasterScreenData() };
+}
+
+function saveContactMaster(input) {
+  input = input || {};
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const sheet = requireSheet_(spreadsheet, 'CustomerContacts');
+  const customerId = String(input.customerId || '').trim();
+  const email = normalizeEmail_(input.email);
+  if (!customerId) throw new Error('顧客は必須です。');
+  if (!readSheetObjects_(requireSheet_(spreadsheet, 'Customers')).some(function(row) { return String(row.customer_id || '') === customerId; })) {
+    throw new Error('選択した顧客が存在しません。');
+  }
+  if (!email) throw new Error('メールアドレスは必須です。');
+  const duplicate = readSheetObjects_(sheet).find(function(row) {
+    return normalizeEmail_(row.email) === email && String(row.contact_id || '') !== String(input.id || '');
+  });
+  if (duplicate) throw new Error('同じメールアドレスの顧客担当者が既に登録されています。');
+  const id = saveMasterRow_(sheet, 'contact_id', String(input.id || ''), 'CON', {
+    customer_id: customerId,
+    contact_name: String(input.name || '').trim(),
+    email: email,
+    phone: String(input.phone || '').trim(),
+    active: input.active !== false,
+    updated_at: new Date()
+  });
+  return { id: id, data: getMasterScreenData() };
+}
+
+function saveMemberMaster(input) {
+  input = input || {};
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const sheet = requireSheet_(spreadsheet, 'Members');
+  const name = String(input.name || '').trim();
+  if (!name) throw new Error('メンバー名は必須です。');
+  const id = saveMasterRow_(sheet, 'member_id', String(input.id || ''), 'MEM', {
+    member_name: name,
+    email: normalizeEmail_(input.email),
+    active: input.active !== false,
+    display_order: toOptionalNumber_(input.displayOrder),
+    updated_at: new Date()
+  });
+  return { id: id, data: getMasterScreenData() };
+}
+
+function saveInquiryCategoryMaster(input) {
+  input = input || {};
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const sheet = ensureInquiryCategorySheet_(spreadsheet);
+  const name = String(input.name || '').trim();
+  if (!name) throw new Error('分類名は必須です。');
+  const duplicate = readSheetObjects_(sheet).find(function(row) {
+    return String(row.category_name || '').trim().toLowerCase() === name.toLowerCase() && String(row.category_id || '') !== String(input.id || '');
+  });
+  if (duplicate) throw new Error('同じ分類名が既に登録されています。');
+  const id = saveMasterRow_(sheet, 'category_id', String(input.id || ''), 'CAT', {
+    category_name: name,
+    active: input.active !== false,
+    display_order: toOptionalNumber_(input.displayOrder),
+    updated_at: new Date()
+  });
+  return { id: id, data: getMasterScreenData() };
+}
+
+function saveSystemSetting(input) {
+  input = input || {};
+  const key = String(input.key || '').trim();
+  if (MASTER_SETTING_KEYS.indexOf(key) < 0) throw new Error('この設定は画面から変更できません。');
+  let value = String(input.value == null ? '' : input.value).trim();
+  if (key === 'MAIL_IMPORT_ENABLED') value = value.toUpperCase() === 'TRUE' ? 'TRUE' : 'FALSE';
+  if (key === 'MAIL_IMPORT_MAX_THREADS') {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 1 || n > 500) throw new Error('最大スレッド数は1〜500で指定してください。');
+    value = String(Math.floor(n));
+  }
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const sheet = requireSheet_(spreadsheet, 'Settings');
+  const rows = readSheetObjects_(sheet);
+  const row = rows.find(function(item) { return String(item.setting_key || '') === key; });
+  if (!row) throw new Error('設定が見つかりません: ' + key);
+  writeRowUpdates_(sheet, row._rowIndex, { setting_value: value, updated_at: new Date() });
+  return getMasterScreenData();
+}
+
+function saveMasterRow_(sheet, idHeader, requestedId, prefix, updates) {
+  const rows = readSheetObjects_(sheet);
+  let id = requestedId;
+  let row = id ? rows.find(function(item) { return String(item[idHeader] || '') === id; }) : null;
+  if (id && !row) throw new Error('更新対象が見つかりません。');
+  if (!row) {
+    id = createStableId_(prefix);
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const values = headers.map(function(header) {
+      if (header === idHeader) return id;
+      return Object.prototype.hasOwnProperty.call(updates, header) ? updates[header] : '';
+    });
+    sheet.appendRow(values);
+  } else {
+    writeRowUpdates_(sheet, row._rowIndex, updates);
+  }
+  return id;
+}
+
+function writeRowUpdates_(sheet, rowIndex, updates) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const values = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+  headers.forEach(function(header, index) {
+    if (Object.prototype.hasOwnProperty.call(updates, header)) values[index] = updates[header];
+  });
+  sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+}
+
+function ensureInquiryCategorySheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName('InquiryCategories');
+  if (sheet) return sheet;
+  sheet = spreadsheet.insertSheet('InquiryCategories');
+  sheet.getRange(1, 1, 1, 5).setValues([['category_id', 'category_name', 'active', 'display_order', 'updated_at']]);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
+function serializeCustomerMaster_(row) {
+  return { id: String(row.customer_id || ''), name: String(row.customer_name || ''), domain: String(row.domain || ''), status: String(row.status || 'ACTIVE'), note: String(row.note || '') };
+}
+function serializeContactMaster_(row) {
+  return { id: String(row.contact_id || ''), customerId: String(row.customer_id || ''), name: String(row.contact_name || ''), email: String(row.email || ''), phone: String(row.phone || ''), active: !isFalse_(row.active) };
+}
+function serializeMemberMaster_(row) {
+  return { id: String(row.member_id || ''), name: String(row.member_name || ''), email: String(row.email || ''), active: !isFalse_(row.active), displayOrder: row.display_order === '' ? '' : Number(row.display_order) };
+}
+function serializeCategoryMaster_(row) {
+  return { id: String(row.category_id || ''), name: String(row.category_name || ''), active: !isFalse_(row.active), displayOrder: row.display_order === '' ? '' : Number(row.display_order) };
+}
+function sortByDisplayOrder_(a, b) {
+  const av = a.displayOrder === '' ? 999999 : Number(a.displayOrder);
+  const bv = b.displayOrder === '' ? 999999 : Number(b.displayOrder);
+  return av - bv || String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+}
+function normalizeDomain_(value) {
+  return String(value || '').trim().toLowerCase().replace(/^@/, '');
+}
+function toOptionalNumber_(value) {
+  if (value === '' || value == null) return '';
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error('表示順は数値で指定してください。');
+  return n;
+}
