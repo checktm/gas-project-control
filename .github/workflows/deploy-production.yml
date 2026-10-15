@@ -1,0 +1,104 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install clasp
+        run: npm install -g @google/clasp@3.4.1
+
+      - name: Validate production secrets
+        env:
+          PROD_GAS_CLIENT_ID: ${{ secrets.PROD_GAS_CLIENT_ID }}
+          PROD_GAS_CLIENT_SECRET: ${{ secrets.PROD_GAS_CLIENT_SECRET }}
+          PROD_GAS_REFRESH_TOKEN: ${{ secrets.PROD_GAS_REFRESH_TOKEN }}
+          PROD_GAS_SCRIPT_ID: ${{ secrets.PROD_GAS_SCRIPT_ID }}
+          PROD_SPREADSHEET_ID: ${{ secrets.PROD_SPREADSHEET_ID }}
+        run: |
+          missing=0
+          for name in PROD_GAS_CLIENT_ID PROD_GAS_CLIENT_SECRET PROD_GAS_REFRESH_TOKEN PROD_GAS_SCRIPT_ID PROD_SPREADSHEET_ID; do
+            if [ -z "${!name}" ]; then
+              echo "$name secret is not configured."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Build production clasp credentials
+        env:
+          PROD_GAS_CLIENT_ID: ${{ secrets.PROD_GAS_CLIENT_ID }}
+          PROD_GAS_CLIENT_SECRET: ${{ secrets.PROD_GAS_CLIENT_SECRET }}
+          PROD_GAS_REFRESH_TOKEN: ${{ secrets.PROD_GAS_REFRESH_TOKEN }}
+        run: |
+          jq -n \
+            --arg clientId "$PROD_GAS_CLIENT_ID" \
+            --arg clientSecret "$PROD_GAS_CLIENT_SECRET" \
+            --arg refreshToken "$PROD_GAS_REFRESH_TOKEN" \
+            '{
+              oauth2ClientSettings: {
+                clientId: $clientId,
+                clientSecret: $clientSecret,
+                redirectUri: "https://developers.google.com/oauthplayground"
+              },
+              token: {
+                refresh_token: $refreshToken,
+                token_type: "Bearer"
+              },
+              isLocalCreds: true
+            }' > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+
+      - name: Build production clasp config
+        env:
+          PROD_GAS_SCRIPT_ID: ${{ secrets.PROD_GAS_SCRIPT_ID }}
+        run: |
+          jq -n \
+            --arg scriptId "$PROD_GAS_SCRIPT_ID" \
+            '{scriptId: $scriptId, rootDir: "src"}' > .clasp.json
+
+      - name: Inject production configuration
+        env:
+          PROD_SPREADSHEET_ID: ${{ secrets.PROD_SPREADSHEET_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('src/Code.gs')
+          text = path.read_text(encoding='utf-8')
+          marker = '__SPREADSHEET_ID__'
+          if marker not in text:
+              raise SystemExit('Spreadsheet ID placeholder is missing from src/Code.gs')
+          text = text.replace(marker, os.environ['PROD_SPREADSHEET_ID'])
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate GAS source
+        run: |
+          if [ ! -f "src/appsscript.json" ]; then
+            echo "src/appsscript.json is missing."
+            exit 1
+          fi
+
+      - name: Show files to deploy
+        run: clasp status
+
+      - name: Push to production Apps Script
+        run: clasp push --force
