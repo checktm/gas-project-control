@@ -1,4 +1,5 @@
 <script>
+const $=id=>document.getElementById(id);
 const inquiryState={data:null,selectedId:null,loading:false};
 const inquiryStatusLabels={NEW:'新規',IN_PROGRESS:'対応中',WAITING_CUSTOMER:'顧客回答待ち',RESOLVED:'解決',CLOSED:'完了'};
 const inquiryPriorityLabels={HIGH:'高',MEDIUM:'中',LOW:'低'};
@@ -6,18 +7,18 @@ const inquiryMatchLabels={EXACT_CONTACT:'担当者一致',DOMAIN_MATCH:'ドメ�
 
 function switchMainView(view){
   const inquiry=view==='inquiries';
-  $('ganttView').classList.toggle('hidden',inquiry);
   $('inquiryView').classList.toggle('hidden',!inquiry);
-  $('navGantt').classList.toggle('active',!inquiry);
+  $('masterView').classList.toggle('hidden',inquiry);
   $('navInquiries').classList.toggle('active',inquiry);
-  $('ganttSummary').classList.toggle('hidden',inquiry);
+  $('navMasters').classList.toggle('active',!inquiry);
   $('inquirySummary').classList.toggle('hidden',!inquiry);
-  $('screenTitle').textContent=inquiry?'問い合わせ管理':'社内基幹システム刷新';
+  $('masterSummary').classList.toggle('hidden',inquiry);
+  $('screenTitle').textContent=inquiry?'問い合わせ管理':'マスタ管理';
   if(inquiry){
-    if(typeof closePanel==='function')closePanel();
     if(!inquiryState.data)loadInquiryData();
-  }else{
-    render();
+    else renderInquiryScreen();
+  }else if(typeof loadMasterData==='function'){
+    loadMasterData(false);
   }
 }
 
@@ -41,7 +42,7 @@ function loadInquiryData(preserveSelection){
 }
 
 function renderInquiryScreen(){
-  const data=inquiryState.data||{inquiries:[],customers:[],contacts:[],members:[]};
+  const data=inquiryState.data||{inquiries:[],customers:[],contacts:[],members:[],categories:[]};
   const filtered=getFilteredInquiries();
   $('inquiryCountSummary').textContent='問い合わせ '+data.inquiries.length+'件';
   const unmatched=data.inquiries.filter(i=>['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus)).length;
@@ -95,7 +96,8 @@ function renderInquiryDetail(){
   fillSelect($('inquiryCustomerInput'),(inquiryState.data.customers||[]).filter(c=>c.status!=='INACTIVE').map(c=>({value:c.id,label:c.name||c.id})),inquiry.customerId,true,'未特定');
   fillContactSelect(inquiry.customerId,inquiry.contactId);
   fillSelect($('inquiryAssigneeInput'),(inquiryState.data.members||[]).filter(m=>m.active).map(m=>({value:m.id,label:m.name||m.id})),inquiry.assignedMemberId,true,'未担当');
-  $('inquiryCategoryInput').value=inquiry.category||'';
+  const categories=(inquiryState.data.categories||[]).filter(c=>c.active||c.name===inquiry.category).map(c=>({value:c.name,label:c.name}));
+  fillSelect($('inquiryCategoryInput'),categories,inquiry.category,true,'未分類');
   $('inquiryDueDateInput').value=inquiry.dueDate||'';
   $('inquirySummaryInput').value=inquiry.summary||'';
   $('inquiryNextActionInput').value=inquiry.nextAction||'';
@@ -128,8 +130,6 @@ function saveInquiry(e){
   e.preventDefault();
   const inquiry=findInquiry(inquiryState.selectedId);
   if(!inquiry)return;
-  const customerId=$('inquiryCustomerInput').value;
-  const contactId=$('inquiryContactInput').value;
   $('saveInquiryButton').disabled=true;
   $('inquiryFormMessage').textContent='保存中...';
   google.script.run
@@ -145,8 +145,8 @@ function saveInquiry(e){
     })
     .updateInquiry({
       inquiryId:inquiry.id,
-      customerId:customerId,
-      contactId:contactId,
+      customerId:$('inquiryCustomerInput').value,
+      contactId:$('inquiryContactInput').value,
       status:$('inquiryStatusInput').value,
       priority:$('inquiryPriorityInput').value,
       assignedMemberId:$('inquiryAssigneeInput').value,
@@ -173,14 +173,15 @@ function inquiryStatusClass(status){return status==='CLOSED'||status==='RESOLVED
 function formatDate(value){if(!value)return'';const p=String(value).slice(0,10).split('-');return p.length===3?p[0]+'/'+p[1]+'/'+p[2]:value}
 function formatShortDateTime(value){if(!value)return'—';const d=new Date(value);if(isNaN(d))return value;return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
 function formatLongDateTime(value){if(!value)return'';const d=new Date(value);if(isNaN(d))return value;return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
-function escapeHtml(value){return String(value==null?'':value).replace(/[&<>'"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]})}
+function escapeHtml(value){return String(value==null?'':value).replace(/[&<>'\"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c]})}
 
-$('navGantt').onclick=function(){switchMainView('gantt')};
 $('navInquiries').onclick=function(){switchMainView('inquiries')};
+$('navMasters').onclick=function(){switchMainView('masters')};
 $('refreshInquiries').onclick=function(){loadInquiryData(true)};
 $('inquiryRows').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(!row)return;inquiryState.selectedId=row.dataset.inquiryId;renderInquiryScreen()};
 $('inquiryCustomerInput').onchange=function(){fillContactSelect(this.value,'')};
 $('inquiryForm').onsubmit=saveInquiry;
 ['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(id=>$(id).onchange=renderInquiryScreen);
 $('inquirySearch').oninput=renderInquiryScreen;
+loadInquiryData(false);
 </script>
