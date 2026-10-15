@@ -1,6 +1,6 @@
 <script>
 const $=id=>document.getElementById(id);
-const inquiryState={data:null,selectedId:null,loading:false};
+const inquiryState={data:null,selectedId:null,loading:false,messagesByInquiry:{},messageLoadingId:null};
 const inquiryStatusLabels={NEW:'新規',IN_PROGRESS:'対応中',WAITING_CUSTOMER:'顧客回答待ち',RESOLVED:'解決',CLOSED:'完了'};
 const inquiryPriorityLabels={HIGH:'高',MEDIUM:'中',LOW:'低'};
 const inquiryMatchLabels={EXACT_CONTACT:'担当者一致',DOMAIN_MATCH:'ドメイン一致',AMBIGUOUS:'候補複数',UNMATCHED:'顧客未特定',MANUAL:'手動設定'};
@@ -33,6 +33,7 @@ function loadInquiryData(preserveSelection){
       inquiryState.data=data;
       if(!preserveSelection||!findInquiry(inquiryState.selectedId))inquiryState.selectedId=null;
       renderInquiryScreen();
+      if(inquiryState.selectedId&&!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiryState.selectedId))loadInquiryMessages(inquiryState.selectedId);
     })
     .withFailureHandler(function(error){
       inquiryState.loading=false;
@@ -55,10 +56,9 @@ function renderInquiryScreen(){
     row.className='inquiry-row inquiry-row-grid'+(inquiryState.selectedId===inquiry.id?' selected':'');
     row.dataset.inquiryId=inquiry.id;
     const customerName=inquiry.customerName||'未特定';
-    const sender=inquiry.messages&&inquiry.messages.length?inquiry.messages[inquiry.messages.length-1].fromEmail:'';
     row.innerHTML=
       '<div><div class="inquiry-primary">'+escapeHtml(formatShortDateTime(inquiry.lastMessageAt||inquiry.receivedAt))+'</div></div>'+
-      '<div><div class="inquiry-primary '+(!inquiry.customerName?'match-warning':'')+'">'+escapeHtml(customerName)+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.contactName||sender||'')+'</div></div>'+
+      '<div><div class="inquiry-primary '+(!inquiry.customerName?'match-warning':'')+'">'+escapeHtml(customerName)+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.contactName||inquiry.contactEmail||'')+'</div></div>'+
       '<div><div class="inquiry-primary"><span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(inquiry.subject||'(件名なし)')+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.category||inquiry.summary||'')+'</div></div>'+
       '<div><div class="inquiry-primary">'+escapeHtml(inquiry.assignedMemberName||'未担当')+'</div></div>'+
       '<div><span class="status-pill '+inquiryStatusClass(inquiry.status)+'">'+escapeHtml(inquiryStatusLabels[inquiry.status]||inquiry.status)+'</span></div>'+
@@ -76,10 +76,41 @@ function getFilteredInquiries(){
   const priority=$('inquiryPriorityFilter').value;
   const unmatchedOnly=$('unmatchedOnly').checked;
   return inquiryState.data.inquiries.filter(function(i){
-    const hay=[i.customerName,i.contactName,i.contactEmail,i.subject,i.summary,i.category]
-      .concat((i.messages||[]).map(m=>m.fromEmail)).join(' ').toLowerCase();
+    const hay=[i.customerName,i.contactName,i.contactEmail,i.subject,i.summary,i.category].join(' ').toLowerCase();
     return(!q||hay.includes(q))&&(status==='all'||i.status===status)&&(priority==='all'||i.priority===priority)&&(!unmatchedOnly||['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus));
   });
+}
+
+function selectInquiry(id){
+  inquiryState.selectedId=id;
+  renderInquiryScreen();
+  if(!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))loadInquiryMessages(id);
+}
+
+function loadInquiryMessages(inquiryId,force){
+  const id=String(inquiryId||'');
+  if(!id)return;
+  if(!force&&Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id)){renderInquiryDetail();return}
+  if(inquiryState.messageLoadingId===id)return;
+  inquiryState.messageLoadingId=id;
+  if(inquiryState.selectedId===id){
+    $('messageCount').textContent='読み込み中...';
+    $('inquiryMessages').innerHTML='<div class="loading-row">メール履歴を読み込み中...</div>';
+  }
+  google.script.run
+    .withSuccessHandler(function(messages){
+      inquiryState.messageLoadingId=null;
+      inquiryState.messagesByInquiry[id]=Array.isArray(messages)?messages:[];
+      if(inquiryState.selectedId===id)renderInquiryDetail();
+    })
+    .withFailureHandler(function(error){
+      inquiryState.messageLoadingId=null;
+      if(inquiryState.selectedId===id){
+        $('messageCount').textContent='';
+        $('inquiryMessages').innerHTML='<div class="error-banner">メール履歴の読み込みに失敗しました。'+escapeHtml(error&&error.message?error.message:String(error))+'</div>';
+      }
+    })
+    .getInquiryMessages(id);
 }
 
 function renderInquiryDetail(){
@@ -103,7 +134,16 @@ function renderInquiryDetail(){
   $('inquiryNextActionInput').value=inquiry.nextAction||'';
   $('inquiryFormMessage').textContent='';
   $('inquiryUpdatedAt').textContent=inquiry.updatedAt?'最終更新 '+formatLongDateTime(inquiry.updatedAt):'';
-  renderInquiryMessages(inquiry.messages||[]);
+
+  if(Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiry.id)){
+    renderInquiryMessages(inquiryState.messagesByInquiry[inquiry.id]);
+  }else if(inquiryState.messageLoadingId===inquiry.id){
+    $('messageCount').textContent='読み込み中...';
+    $('inquiryMessages').innerHTML='<div class="loading-row">メール履歴を読み込み中...</div>';
+  }else{
+    $('messageCount').textContent='';
+    $('inquiryMessages').innerHTML='<div class="loading-row">メール履歴を読み込みます...</div>';
+  }
 }
 
 function fillContactSelect(customerId,selectedId){
@@ -178,7 +218,7 @@ function escapeHtml(value){return String(value==null?'':value).replace(/[&<>'\"]
 $('navInquiries').onclick=function(){switchMainView('inquiries')};
 $('navMasters').onclick=function(){switchMainView('masters')};
 $('refreshInquiries').onclick=function(){loadInquiryData(true)};
-$('inquiryRows').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(!row)return;inquiryState.selectedId=row.dataset.inquiryId;renderInquiryScreen()};
+$('inquiryRows').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(!row)return;selectInquiry(row.dataset.inquiryId)};
 $('inquiryCustomerInput').onchange=function(){fillContactSelect(this.value,'')};
 $('inquiryForm').onsubmit=saveInquiry;
 ['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(id=>$(id).onchange=renderInquiryScreen);
