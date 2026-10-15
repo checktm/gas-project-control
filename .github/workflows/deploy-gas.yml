@@ -111,13 +111,21 @@ jobs:
       - name: Inject development configuration
         run: |
           python - <<'PY'
+          from datetime import datetime, timezone
           from pathlib import Path
+          import os
+
           path = Path('src/Code.gs')
           text = path.read_text(encoding='utf-8')
-          marker = '__SPREADSHEET_ID__'
-          if marker not in text:
-              raise SystemExit('Spreadsheet ID placeholder is missing from src/Code.gs')
-          text = text.replace(marker, '${{ env.DEV_SPREADSHEET_ID }}')
+          replacements = {
+              '__SPREADSHEET_ID__': '${{ env.DEV_SPREADSHEET_ID }}',
+              '__BUILD_SHA__': os.environ['GITHUB_SHA'][:7],
+              '__BUILD_TIME__': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+          }
+          for marker, value in replacements.items():
+              if marker not in text:
+                  raise SystemExit(f'{marker} placeholder is missing from src/Code.gs')
+              text = text.replace(marker, value)
           path.write_text(text, encoding='utf-8')
           PY
 
