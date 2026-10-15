@@ -29,6 +29,57 @@ PM向けのプロジェクト進捗管理資料を、Google Apps Script（GAS）
 8. 遅延・期限超過の強調表示
 9. プロジェクト全体の進捗サマリー
 
+## デプロイ環境
+
+同一の `src/` を、開発環境と顧客本番環境へ分けてデプロイする。
+
+### Development
+
+GitHub Actions の `Deploy Development` を手動実行する。
+
+- Apps Script: 現在の開発用GAS
+- Spreadsheet: 開発用 `gas-project-control`
+- OAuth Secrets:
+  - `GAS_CLIENT_ID`
+  - `GAS_CLIENT_SECRET`
+  - `GAS_REFRESH_TOKEN`
+
+開発用の `.clasp.json` はリポジトリに保持する。
+
+### Production
+
+GitHub Actions の `Deploy Production` を手動実行する。
+本番用の識別子・認証情報はリポジトリへ保存せず、GitHub Secretsのみで管理する。
+
+必要なSecrets:
+
+- `PROD_GAS_CLIENT_ID`
+- `PROD_GAS_CLIENT_SECRET`
+- `PROD_GAS_REFRESH_TOKEN`
+- `PROD_GAS_SCRIPT_ID`
+- `PROD_SPREADSHEET_ID`
+
+1つでも未設定の場合、本番デプロイは停止する。
+
+### 環境固有設定
+
+`src/Code.gs` のSpreadsheet IDはソースへ固定せず、`__SPREADSHEET_ID__` をデプロイ時に対象環境のIDへ置換する。
+
+本番の `.clasp.json` もGitHub Actions実行時に `PROD_GAS_SCRIPT_ID` から生成する。
+これにより、GitHub上の共通ソースを変更せずに、開発環境と顧客環境を分離できる。
+
+### 顧客環境へ移行するとき
+
+顧客側で以下を用意する。
+
+1. 顧客Googleアカウント所有のApps Scriptプロジェクト
+2. 顧客Google Drive内の管理用Spreadsheet
+3. 顧客側Google Cloud OAuthクライアント
+4. 顧客Googleアカウントで取得したRefresh Token
+5. 上記5つの `PROD_*` SecretsをGitHubへ登録
+
+顧客PCへのNode.js / clasp / Gitの常設インストールは不要とし、デプロイ処理はGitHub Actions上で実行する。
+
 ## 開発方針
 
 詳細は `prompts/main.md` を参照してください。
