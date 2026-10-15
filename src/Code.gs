@@ -23,3 +23,16 @@ function include(filename) {
 function getAppConfig() {
   return APP_CONFIG;
 }
+
+/**
+ * 初回セットアップ用。
+ * Gemini APIで使う UrlFetchApp の権限承認を明示的に発生させる。
+ * 外部サービスへ業務データやAPIキーは送らない。
+ */
+function authorizeExternalRequest() {
+  const response = UrlFetchApp.fetch('https://www.google.com/generate_204', {
+    method: 'get',
+    muteHttpExceptions: true
+  });
+  return response.getResponseCode();
+}
