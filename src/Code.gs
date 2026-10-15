@@ -1,6 +1,7 @@
 const APP_CONFIG = {
   appName: 'Project Control',
-  spreadsheetId: '1lmiGLeTsT6RRPG4N_hucomsA9PMlUgeljQdffL6GbYY'
+  // デプロイ時にGitHub Actionsが対象環境のSpreadsheet IDへ置換する。
+  spreadsheetId: '__SPREADSHEET_ID__'
 };
 
 function doGet() {
