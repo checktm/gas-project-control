@@ -1,0 +1,38 @@
+<script>
+window.switchMainView=function(view){
+  const dashboard=view==='dashboard';
+  const inquiry=view==='inquiries';
+  const masters=view==='masters';
+
+  $('dashboardView').classList.toggle('hidden',!dashboard);
+  $('inquiryView').classList.toggle('hidden',!inquiry);
+  $('masterView').classList.toggle('hidden',!masters);
+
+  $('navDashboard').classList.toggle('active',dashboard);
+  $('navInquiries').classList.toggle('active',inquiry);
+  $('navMasters').classList.toggle('active',masters);
+
+  $('dashboardSummary').classList.toggle('hidden',!dashboard);
+  $('inquirySummary').classList.toggle('hidden',!inquiry);
+  $('masterSummary').classList.toggle('hidden',!masters);
+
+  $('screenTitle').textContent=dashboard?'ダッシュボード':inquiry?'問い合わせ管理':'マスタ管理';
+
+  if(dashboard){
+    loadDashboardData(false);
+  }else if(inquiry){
+    if(!inquiryState.data)loadInquiryData();
+    else renderInquiryScreen();
+  }else if(typeof loadMasterData==='function'){
+    loadMasterData(false);
+  }
+};
+
+$('navDashboard').onclick=function(){switchMainView('dashboard')};
+$('navInquiries').onclick=function(){switchMainView('inquiries')};
+$('navMasters').onclick=function(){switchMainView('masters')};
+$('refreshDashboard').onclick=function(){loadDashboardData(true)};
+$('dashboardRecent').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(row)openDashboardInquiry(row.dataset.inquiryId)};
+
+switchMainView('dashboard');
+</script>
