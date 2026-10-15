@@ -1,0 +1,141 @@
+<script>
+const masterState={data:null,type:'customers',selectedId:null,creating:false,loading:false};
+const masterMeta={
+  customers:{title:'顧客',description:'問い合わせ送信者を顧客へ紐付けるための会社・組織を管理します。'},
+  contacts:{title:'顧客担当者',description:'顧客担当者とメールアドレスを管理します。メール完全一致による自動判定に利用します。'},
+  members:{title:'社内メンバー',description:'問い合わせ担当として選択する社内メンバーを管理します。'},
+  categories:{title:'問い合わせ分類',description:'問い合わせに設定する分類を管理します。'},
+  settings:{title:'システム設定',description:'メール取込に関する安全な設定項目を管理します。'}
+};
+
+function loadMasterData(force){
+  if(masterState.loading)return;
+  if(masterState.data&&!force){renderMasterScreen();return}
+  masterState.loading=true;
+  $('masterRows').innerHTML='<div class="loading-row">読み込み中...</div>';
+  google.script.run
+    .withSuccessHandler(function(data){masterState.loading=false;masterState.data=data;renderMasterScreen()})
+    .withFailureHandler(function(error){masterState.loading=false;$('masterRows').innerHTML='<div class="error-banner">読み込みに失敗しました。'+escapeHtml(error&&error.message?error.message:String(error))+'</div>'})
+    .getMasterScreenData();
+}
+
+function renderMasterScreen(){
+  const meta=masterMeta[masterState.type];
+  $('masterListTitle').textContent=meta.title;
+  $('masterListDescription').textContent=meta.description;
+  const settingsMode=masterState.type==='settings';
+  $('newMasterButton').classList.toggle('hidden',settingsMode);
+  $('showInactiveMasters').closest('label').classList.toggle('hidden',settingsMode);
+  document.querySelectorAll('.master-tab').forEach(function(btn){btn.classList.toggle('active',btn.dataset.masterType===masterState.type)});
+  renderMasterRows();
+  renderMasterEditor();
+}
+
+function getMasterItems(){
+  const data=masterState.data||{};
+  return Array.isArray(data[masterState.type])?data[masterState.type]:[];
+}
+
+function renderMasterRows(){
+  const q=String($('masterSearch').value||'').trim().toLowerCase();
+  const showInactive=$('showInactiveMasters').checked;
+  let items=getMasterItems().filter(function(item){
+    if(masterState.type!=='settings'&&!showInactive&&!masterItemActive(item))return false;
+    const hay=Object.keys(item).map(k=>String(item[k]==null?'':item[k])).join(' ').toLowerCase();
+    return !q||hay.includes(q);
+  });
+  $('masterRows').innerHTML='';
+  $('masterEmpty').classList.toggle('hidden',items.length>0);
+  items.forEach(function(item){
+    const row=document.createElement('button');
+    const itemId=masterItemId(item);
+    row.type='button';
+    row.className='master-row'+(String(masterState.selectedId)===String(itemId)?' selected':'');
+    row.dataset.masterId=itemId;
+    row.innerHTML=masterRowHtml(item);
+    $('masterRows').appendChild(row);
+  });
+}
+
+function masterItemId(item){return masterState.type==='settings'?item.key:item.id}
+function masterItemActive(item){
+  if(masterState.type==='customers')return item.status!=='INACTIVE';
+  if(['contacts','members','categories'].includes(masterState.type))return item.active!==false;
+  return true;
+}
+function masterRowHtml(item){
+  if(masterState.type==='customers')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.domain||'ドメイン未設定')+'</small></span><span class="master-state '+(item.status==='INACTIVE'?'inactive':'')+'">'+(item.status==='INACTIVE'?'無効':'有効')+'</span>';
+  if(masterState.type==='contacts')return '<span><strong>'+escapeHtml(item.name||item.email||'(名称なし)')+'</strong><small>'+escapeHtml(customerNameById(item.customerId)+' / '+(item.email||''))+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  if(masterState.type==='members')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.email||'')+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  if(masterState.type==='categories')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>表示順 '+escapeHtml(item.displayOrder===''?'—':item.displayOrder)+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  return '<span><strong>'+escapeHtml(settingLabel(item.key))+'</strong><small>'+escapeHtml(item.description||'')+'</small></span><span class="setting-value-preview">'+escapeHtml(maskSettingValue(item.key,item.value))+'</span>';
+}
+
+function renderMasterEditor(){
+  const item=masterState.creating?null:getMasterItems().find(function(x){return String(masterItemId(x))===String(masterState.selectedId)});
+  const show=masterState.creating||!!item;
+  $('masterEditorEmpty').classList.toggle('hidden',show);
+  $('masterForm').classList.toggle('hidden',!show);
+  if(!show)return;
+  $('masterEditorTitle').textContent=masterState.creating?'新規'+masterMeta[masterState.type].title:masterMeta[masterState.type].title+'編集';
+  $('masterFields').innerHTML=buildMasterFields(item||{});
+  $('masterFormMessage').textContent='';
+  $('masterEditorHint').textContent=masterState.type==='settings'?'変更は次回の取込処理から反映されます。':'削除せず無効化して履歴参照を維持します。';
+}
+
+function buildMasterFields(item){
+  if(masterState.type==='customers')return fieldText('masterName','顧客名',item.name,true)+fieldText('masterDomain','メールドメイン',item.domain,false,'example.co.jp')+fieldSelect('masterStatus','状態',[['ACTIVE','有効'],['INACTIVE','無効']],item.status||'ACTIVE')+fieldTextarea('masterNote','備考',item.note);
+  if(masterState.type==='contacts')return fieldSelect('masterCustomerId','顧客',(masterState.data.customers||[]).filter(c=>c.status!=='INACTIVE'||c.id===item.customerId).map(c=>[c.id,c.name||c.id]),item.customerId,'顧客を選択')+fieldText('masterName','担当者名',item.name)+fieldText('masterEmail','メールアドレス',item.email,true,'name@example.co.jp','email')+fieldText('masterPhone','電話番号',item.phone)+fieldCheckbox('masterActive','有効',item.active!==false);
+  if(masterState.type==='members')return fieldText('masterName','メンバー名',item.name,true)+fieldText('masterEmail','メールアドレス',item.email,false,'name@example.co.jp','email')+fieldNumber('masterDisplayOrder','表示順',item.displayOrder)+fieldCheckbox('masterActive','有効',item.active!==false);
+  if(masterState.type==='categories')return fieldText('masterName','分類名',item.name,true)+fieldNumber('masterDisplayOrder','表示順',item.displayOrder)+fieldCheckbox('masterActive','有効',item.active!==false);
+  return buildSettingField(item);
+}
+
+function fieldText(id,label,value,required,placeholder,type){return '<label>'+escapeHtml(label)+(required?' <span class="required">*</span>':'')+'<input id="'+id+'" type="'+(type||'text')+'" value="'+escapeAttr(value||'')+'" placeholder="'+escapeAttr(placeholder||'')+'" '+(required?'required':'')+'></label>'}
+function fieldNumber(id,label,value){return '<label>'+escapeHtml(label)+'<input id="'+id+'" type="number" value="'+escapeAttr(value==null?'':value)+'"></label>'}
+function fieldTextarea(id,label,value){return '<label>'+escapeHtml(label)+'<textarea id="'+id+'" rows="4">'+escapeHtml(value||'')+'</textarea></label>'}
+function fieldCheckbox(id,label,checked){return '<label class="master-checkbox"><input id="'+id+'" type="checkbox" '+(checked?'checked':'')+'><span>'+escapeHtml(label)+'</span></label>'}
+function fieldSelect(id,label,options,value,blank){let html='<label>'+escapeHtml(label)+'<select id="'+id+'">';if(blank)html+='<option value="">'+escapeHtml(blank)+'</option>';options.forEach(function(o){html+='<option value="'+escapeAttr(o[0])+'" '+(String(o[0])===String(value)?'selected':'')+'>'+escapeHtml(o[1])+'</option>'});return html+'</select></label>'}
+function buildSettingField(item){
+  if(item.key==='MAIL_IMPORT_ENABLED')return '<label>設定<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><select id="masterSettingValue"><option value="TRUE" '+(item.value==='TRUE'?'selected':'')+'>有効</option><option value="FALSE" '+(item.value!=='TRUE'?'selected':'')+'>無効</option></select></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
+  const type=item.key==='MAIL_IMPORT_MAX_THREADS'?'number':'text';
+  return '<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><label>'+escapeHtml(settingLabel(item.key))+'<input id="masterSettingValue" type="'+type+'" value="'+escapeAttr(item.value||'')+'"></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
+}
+
+function saveMaster(e){
+  e.preventDefault();
+  const current=masterState.creating?null:getMasterItems().find(x=>String(masterItemId(x))===String(masterState.selectedId));
+  $('saveMasterButton').disabled=true;
+  $('masterFormMessage').textContent='保存中...';
+  let method,payload;
+  if(masterState.type==='customers'){method='saveCustomerMaster';payload={id:current&&current.id,name:$('masterName').value,domain:$('masterDomain').value,status:$('masterStatus').value,note:$('masterNote').value}}
+  if(masterState.type==='contacts'){method='saveContactMaster';payload={id:current&&current.id,customerId:$('masterCustomerId').value,name:$('masterName').value,email:$('masterEmail').value,phone:$('masterPhone').value,active:$('masterActive').checked}}
+  if(masterState.type==='members'){method='saveMemberMaster';payload={id:current&&current.id,name:$('masterName').value,email:$('masterEmail').value,displayOrder:$('masterDisplayOrder').value,active:$('masterActive').checked}}
+  if(masterState.type==='categories'){method='saveInquiryCategoryMaster';payload={id:current&&current.id,name:$('masterName').value,displayOrder:$('masterDisplayOrder').value,active:$('masterActive').checked}}
+  if(masterState.type==='settings'){method='saveSystemSetting';payload={key:$('masterSettingKey').value,value:$('masterSettingValue').value}}
+  google.script.run
+    .withSuccessHandler(function(result){
+      $('saveMasterButton').disabled=false;
+      masterState.data=result&&result.data?result.data:result;
+      if(result&&result.id)masterState.selectedId=result.id;
+      masterState.creating=false;
+      $('masterFormMessage').textContent='保存しました。';
+      renderMasterScreen();
+      inquiryState.data=null;
+    })
+    .withFailureHandler(function(error){$('saveMasterButton').disabled=false;$('masterFormMessage').textContent='保存に失敗しました。'+(error&&error.message?error.message:String(error))})
+    [method](payload);
+}
+
+function customerNameById(id){const c=(masterState.data&&masterState.data.customers||[]).find(x=>x.id===id);return c?c.name:'顧客未設定'}
+function settingLabel(key){return {INQUIRY_GROUP_ADDRESS:'問い合わせ受付アドレス',MAIL_SEARCH_QUERY:'メール検索条件',MAIL_IMPORT_MAX_THREADS:'1回の最大スレッド数',MAIL_IMPORT_ENABLED:'メール自動取込'}[key]||key}
+function maskSettingValue(key,value){if(key==='MAIL_IMPORT_ENABLED')return value==='TRUE'?'有効':'無効';return String(value||'')}
+function escapeAttr(value){return escapeHtml(value).replace(/`/g,'&#96;')}
+
+$('masterSearch').oninput=renderMasterRows;
+$('showInactiveMasters').onchange=renderMasterRows;
+$('newMasterButton').onclick=function(){masterState.creating=true;masterState.selectedId=null;renderMasterScreen()};
+$('masterRows').onclick=function(e){const row=e.target.closest('[data-master-id]');if(!row)return;masterState.creating=false;masterState.selectedId=row.dataset.masterId;renderMasterScreen()};
+$('masterForm').onsubmit=saveMaster;
+document.querySelectorAll('.master-tab').forEach(function(btn){btn.onclick=function(){masterState.type=btn.dataset.masterType;masterState.selectedId=null;masterState.creating=false;$('masterSearch').value='';renderMasterScreen()}});
+</script>
