@@ -28,11 +28,63 @@ window.switchMainView=function(view){
   }
 };
 
+function ensureInquiryAiSummaryUi(){
+  if($('generateInquirySummaryButton'))return;
+  const textarea=$('inquirySummaryInput');
+  if(!textarea)return;
+  const label=textarea.closest('label');
+  if(!label)return;
+
+  const controls=document.createElement('div');
+  controls.className='ai-summary-controls';
+  controls.innerHTML='<button type="button" id="generateInquirySummaryButton" class="button subtle">AIで要約</button><span id="aiSummaryStatus" class="ai-summary-status">Geminiで概要候補を作成します</span>';
+  label.parentNode.insertBefore(controls,label.nextSibling);
+
+  const style=document.createElement('style');
+  style.textContent='.ai-summary-controls{display:flex;align-items:center;gap:10px;margin-top:-4px}.ai-summary-controls .button{padding:7px 11px}.ai-summary-status{font-size:11px;color:#64748b}.ai-summary-status.success{color:#166534}.ai-summary-status.error{color:#b91c1c}';
+  document.head.appendChild(style);
+
+  $('generateInquirySummaryButton').onclick=generateInquirySummaryCandidate;
+}
+
+function generateInquirySummaryCandidate(){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  if(!inquiry)return;
+  const summaryInput=$('inquirySummaryInput');
+  const current=String(summaryInput.value||'').trim();
+  if(current&&!window.confirm('現在の概要をAI要約候補で置き換えます。続けますか？'))return;
+
+  const button=$('generateInquirySummaryButton');
+  const status=$('aiSummaryStatus');
+  button.disabled=true;
+  button.textContent='要約中...';
+  status.className='ai-summary-status';
+  status.textContent='メール履歴をGeminiで要約しています...';
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      button.disabled=false;
+      button.textContent='AIで要約';
+      summaryInput.value=result&&result.summary?result.summary:'';
+      status.className='ai-summary-status success';
+      status.textContent='AI要約を生成しました。内容を確認して保存してください。';
+      summaryInput.focus();
+    })
+    .withFailureHandler(function(error){
+      button.disabled=false;
+      button.textContent='AIで要約';
+      status.className='ai-summary-status error';
+      status.textContent='要約に失敗しました。'+(error&&error.message?error.message:String(error));
+    })
+    .generateInquirySummary(inquiry.id);
+}
+
 $('navDashboard').onclick=function(){switchMainView('dashboard')};
 $('navInquiries').onclick=function(){switchMainView('inquiries')};
 $('navMasters').onclick=function(){switchMainView('masters')};
 $('refreshDashboard').onclick=function(){loadDashboardData(true)};
 $('dashboardRecent').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(row)openDashboardInquiry(row.dataset.inquiryId)};
 
+ensureInquiryAiSummaryUi();
 switchMainView('dashboard');
 </script>
