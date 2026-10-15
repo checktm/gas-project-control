@@ -1,0 +1,69 @@
+<style>
+@media (max-width:760px){
+  html,body{height:100%;min-height:100%;overflow:hidden}
+  .app-shell{height:100dvh;min-height:100dvh;overflow:hidden}
+  .app-header{height:auto;min-height:96px;padding:10px 12px 8px;display:grid;grid-template-columns:1fr;align-items:start;gap:8px}
+  .app-header>div:first-child{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .app-title{font-size:10px}.project-title{font-size:16px;margin:0}
+  .main-nav{order:3;margin:0!important;width:100%;display:grid!important;grid-template-columns:repeat(3,1fr);gap:6px!important}
+  .nav-button{min-height:42px;padding:8px 6px!important;font-size:12px}
+  .project-summary{order:4;display:none!important}
+  .button{min-height:42px}
+  input,select,textarea{font-size:16px!important}
+
+  .dashboard-view{padding:10px!important}
+  .dashboard-hero{gap:10px;margin-bottom:10px}
+  .dashboard-hero h1{font-size:20px}.dashboard-hero p{font-size:12px;line-height:1.5}
+  .dashboard-hero-actions{width:100%;display:grid!important;grid-template-columns:1fr 1fr;gap:8px!important}
+  .dashboard-chip{min-width:0;justify-content:center;text-align:center;padding:0 8px;font-size:11px}
+  .dashboard-hero-actions .button{grid-column:1/-1;width:100%}
+  .dashboard-kpis{grid-template-columns:1fr 1fr!important;gap:8px!important;margin-bottom:10px!important}
+  .dashboard-kpi{padding:12px!important;min-height:92px!important}.dashboard-kpi-value{font-size:26px!important}.dashboard-kpi-note{font-size:10px!important}
+  .dashboard-main-grid{grid-template-columns:1fr!important;gap:10px!important}.dashboard-side-stack{display:grid!important;grid-template-columns:1fr!important;gap:10px!important}
+  .dashboard-section{padding:12px!important}.dashboard-recent-row{padding:10px!important}
+  .dashboard-build-row{grid-template-columns:70px 1fr!important}
+
+  .inquiry-toolbar{padding:8px!important;gap:8px!important;align-items:stretch!important;flex-direction:column!important}
+  .inquiry-toolbar .filters{display:grid!important;grid-template-columns:1fr 1fr;gap:8px!important;width:100%}
+  .inquiry-toolbar .search-input{grid-column:1/-1;width:100%!important}
+  .inquiry-toolbar .checkbox-label{grid-column:1/-1;min-height:38px}
+  .inquiry-toolbar .toolbar-right{margin:0!important;width:100%}.inquiry-toolbar .toolbar-right .button{width:100%}
+  .inquiry-layout{display:block!important;min-height:0;overflow:hidden}
+  .inquiry-list-pane{height:100%;border-right:0!important}
+  .inquiry-list-header{display:none!important}
+  .inquiry-list-body{padding:4px 8px 12px;overflow:auto}
+  .inquiry-row-grid{display:grid!important;grid-template-columns:72px 1fr auto!important;grid-template-areas:'date customer status' 'subject subject subject' 'assignee due due'!important;gap:2px 8px}
+  .inquiry-row{margin:6px 0;min-height:0!important;border:1px solid #e2e8f0!important;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.04)}
+  .inquiry-row>div{padding:7px 9px!important}
+  .inquiry-row>div:nth-child(1){grid-area:date}.inquiry-row>div:nth-child(2){grid-area:customer}.inquiry-row>div:nth-child(3){grid-area:subject;padding-top:2px!important}.inquiry-row>div:nth-child(4){grid-area:assignee}.inquiry-row>div:nth-child(5){grid-area:status;text-align:right}.inquiry-row>div:nth-child(6){grid-area:due;text-align:right}
+  .inquiry-primary{font-size:12px}.inquiry-secondary{font-size:10px}.status-pill{font-size:10px}
+
+  .inquiry-detail-pane{display:none;position:fixed!important;inset:0!important;z-index:80;background:#f8fafc!important;overflow:auto!important;overscroll-behavior:contain}
+  #inquiryView.mobile-detail-open .inquiry-detail-pane{display:block}
+  .mobile-detail-back{position:sticky;top:0;z-index:5;width:100%;height:50px;border:0;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);text-align:left;padding:0 14px;font-weight:700;color:#1d4ed8;font-size:14px}
+  .inquiry-detail-header{padding:14px 14px 10px!important}.inquiry-detail-header h2{font-size:18px!important}.detail-meta{line-height:1.5}
+  .inquiry-form{padding:12px 14px!important;gap:10px!important}.form-two-columns,.form-three-columns{grid-template-columns:1fr!important;gap:10px!important}
+  .inquiry-actions{position:sticky;bottom:0;background:#fff;padding:10px 0 2px;z-index:3}.inquiry-actions .button{min-width:110px}
+  .ai-summary-controls{align-items:stretch!important;flex-direction:column!important;margin-top:0!important}.ai-summary-controls .button{width:100%}
+  .inquiry-reply-section{margin:12px 14px!important;padding:12px!important}.reply-actions{align-items:stretch!important;flex-direction:column!important}.reply-actions .button{width:100%}
+  .message-section{padding:14px!important}.mail-card{padding:10px 11px!important}.mail-card-header{flex-direction:column;gap:3px!important}.mail-card-body{font-size:13px!important;max-height:none!important}
+
+  .master-layout{display:flex!important;flex-direction:column!important;overflow:hidden}
+  .master-menu{flex:0 0 auto;display:flex!important;flex-direction:row!important;overflow-x:auto;padding:8px!important;border-right:0!important;border-bottom:1px solid #e2e8f0;gap:6px!important;scrollbar-width:none}
+  .master-menu::-webkit-scrollbar{display:none}.master-menu-title{display:none}.master-tab{flex:0 0 auto;white-space:nowrap;min-height:40px;padding:8px 11px!important}
+  .master-list-pane{flex:1;min-height:0;border-right:0!important}.master-list-toolbar{padding:12px!important;align-items:flex-start}.master-list-title{font-size:17px!important}.master-list-description{display:none!important}.master-list-toolbar .button{white-space:nowrap}
+  .master-search-row{padding:8px 12px!important;gap:8px!important}.master-search-row{flex-wrap:wrap}.master-search-row .search-input{width:100%;flex-basis:100%}
+  .master-row{padding:12px!important}
+  .master-editor-pane{display:none;position:fixed!important;inset:0!important;width:auto!important;z-index:90!important;background:#fff;overflow:auto;box-shadow:none!important}
+  .master-editor-pane.mobile-editor-open{display:block!important}
+  .mobile-master-back{position:sticky;top:0;z-index:5;width:100%;height:50px;border:0;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);text-align:left;padding:0 14px;font-weight:700;color:#1d4ed8;font-size:14px}
+  .master-form{padding:14px!important}.master-form .panel-actions{position:sticky;bottom:0;background:#fff;padding:10px 0 2px}
+}
+
+@media (max-width:390px){
+  .dashboard-kpis{grid-template-columns:1fr!important}
+  .inquiry-toolbar .filters{grid-template-columns:1fr}
+  .inquiry-toolbar .search-input,.inquiry-toolbar .checkbox-label{grid-column:auto}
+  .app-title{display:none}
+}
+</style>
