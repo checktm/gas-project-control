@@ -3,6 +3,7 @@ const INQUIRY_PRIORITY_VALUES = ['HIGH', 'MEDIUM', 'LOW'];
 
 /**
  * 問い合わせ管理画面の初期表示データを返す。
+ * メール本文は初期表示では取得せず、getInquiryMessages() で選択時に取得する。
  */
 function getInquiryScreenData() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
@@ -11,32 +12,17 @@ function getInquiryScreenData() {
   const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
   const categories = readSheetObjects_(ensureInquiryCategorySheet_(spreadsheet));
   const inquiries = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries));
-  const messages = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.messages));
 
   const customerById = indexBy_(customers, 'customer_id');
   const contactById = indexBy_(contacts, 'contact_id');
   const memberById = indexBy_(members, 'member_id');
-  const messagesByInquiry = {};
-
-  messages.forEach(function(row) {
-    const inquiryId = String(row.inquiry_id || '');
-    if (!inquiryId) return;
-    if (!messagesByInquiry[inquiryId]) messagesByInquiry[inquiryId] = [];
-    messagesByInquiry[inquiryId].push(serializeInquiryMessage_(row));
-  });
-
-  Object.keys(messagesByInquiry).forEach(function(inquiryId) {
-    messagesByInquiry[inquiryId].sort(function(a, b) {
-      return String(a.sentAt).localeCompare(String(b.sentAt));
-    });
-  });
 
   return {
     inquiries: inquiries.map(function(row) {
       const customer = customerById[String(row.customer_id || '')] || {};
       const contact = contactById[String(row.contact_id || '')] || {};
       const member = memberById[String(row.assigned_member_id || '')] || {};
-      return serializeInquiry_(row, customer, contact, member, messagesByInquiry[String(row.inquiry_id || '')] || []);
+      return serializeInquiry_(row, customer, contact, member);
     }).sort(function(a, b) {
       return String(b.lastMessageAt || b.receivedAt).localeCompare(String(a.lastMessageAt || a.receivedAt));
     }),
@@ -75,6 +61,49 @@ function getInquiryScreenData() {
     statusValues: INQUIRY_STATUS_VALUES,
     priorityValues: INQUIRY_PRIORITY_VALUES
   };
+}
+
+/**
+ * 選択された問い合わせのメール履歴だけを取得する。
+ * InquiryMessages 全件の本文を読み込まないよう、最初に inquiry_id 列だけを走査し、
+ * 該当行のみ本文を含む行データを読む。
+ */
+function getInquiryMessages(inquiryId) {
+  const id = String(inquiryId || '').trim();
+  if (!id) throw new Error('inquiryId is required.');
+
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const sheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.messages);
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 2 || lastColumn < 1) return [];
+
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  const inquiryIdIndex = headers.indexOf('inquiry_id');
+  if (inquiryIdIndex < 0) throw new Error('Missing header: inquiry_id in ' + sheet.getName());
+
+  const ids = sheet.getRange(2, inquiryIdIndex + 1, lastRow - 1, 1).getValues();
+  const rowNumbers = [];
+  ids.forEach(function(row, index) {
+    if (String(row[0] || '') === id) rowNumbers.push(index + 2);
+  });
+  if (!rowNumbers.length) return [];
+
+  const messages = rowNumbers.map(function(rowNumber) {
+    const values = sheet.getRange(rowNumber, 1, 1, lastColumn).getValues()[0];
+    const row = {};
+    headers.forEach(function(header, index) {
+      if (header) row[header] = values[index];
+    });
+    return serializeInquiryMessage_(row);
+  });
+
+  messages.sort(function(a, b) {
+    return String(a.sentAt).localeCompare(String(b.sentAt));
+  });
+  return messages;
 }
 
 /**
@@ -163,7 +192,7 @@ function validateInquiryCategory_(spreadsheet, category) {
   }
 }
 
-function serializeInquiry_(row, customer, contact, member, messages) {
+function serializeInquiry_(row, customer, contact, member) {
   return {
     id: String(row.inquiry_id || ''),
     customerId: String(row.customer_id || ''),
@@ -184,8 +213,7 @@ function serializeInquiry_(row, customer, contact, member, messages) {
     customerMatchStatus: String(row.customer_match_status || 'UNMATCHED'),
     receivedAt: formatDateForClient_(row.received_at, "yyyy-MM-dd'T'HH:mm:ss"),
     lastMessageAt: formatDateForClient_(row.last_message_at, "yyyy-MM-dd'T'HH:mm:ss"),
-    updatedAt: formatDateForClient_(row.updated_at, "yyyy-MM-dd'T'HH:mm:ss"),
-    messages: messages
+    updatedAt: formatDateForClient_(row.updated_at, "yyyy-MM-dd'T'HH:mm:ss")
   };
 }
 
