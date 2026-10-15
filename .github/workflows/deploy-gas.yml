@@ -1,4 +1,4 @@
-name: Deploy GAS
+name: Deploy Development
 
 on:
   workflow_dispatch:
@@ -9,6 +9,10 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: development
+
+    env:
+      DEV_SPREADSHEET_ID: 1lmiGLeTsT6RRPG4N_hucomsA9PMlUgeljQdffL6GbYY
 
     steps:
       - name: Checkout
@@ -22,7 +26,7 @@ jobs:
       - name: Install clasp
         run: npm install -g @google/clasp@3.4.1
 
-      - name: Validate OAuth secrets
+      - name: Validate development secrets
         env:
           GAS_CLIENT_ID: ${{ secrets.GAS_CLIENT_ID }}
           GAS_CLIENT_SECRET: ${{ secrets.GAS_CLIENT_SECRET }}
@@ -63,6 +67,19 @@ jobs:
             }' > "$HOME/.clasprc.json"
           chmod 600 "$HOME/.clasprc.json"
 
+      - name: Inject development configuration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/Code.gs')
+          text = path.read_text(encoding='utf-8')
+          marker = '__SPREADSHEET_ID__'
+          if marker not in text:
+              raise SystemExit('Spreadsheet ID placeholder is missing from src/Code.gs')
+          text = text.replace(marker, '${{ env.DEV_SPREADSHEET_ID }}')
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Validate GAS source
         run: |
           if [ ! -f "src/appsscript.json" ]; then
@@ -73,5 +90,5 @@ jobs:
       - name: Show files to deploy
         run: clasp status
 
-      - name: Push to Apps Script
+      - name: Push to development Apps Script
         run: clasp push --force
