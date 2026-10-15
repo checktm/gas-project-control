@@ -9,6 +9,7 @@ function getInquiryScreenData() {
   const customers = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.customers));
   const contacts = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.contacts));
   const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
+  const categories = readSheetObjects_(ensureInquiryCategorySheet_(spreadsheet));
   const inquiries = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries));
   const messages = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.messages));
 
@@ -63,6 +64,14 @@ function getInquiryScreenData() {
         active: !isFalse_(row.active)
       };
     }),
+    categories: categories.map(function(row) {
+      return {
+        id: String(row.category_id || ''),
+        name: String(row.category_name || ''),
+        active: !isFalse_(row.active),
+        displayOrder: row.display_order === '' ? '' : Number(row.display_order)
+      };
+    }).sort(sortByDisplayOrder_),
     statusValues: INQUIRY_STATUS_VALUES,
     priorityValues: INQUIRY_PRIORITY_VALUES
   };
@@ -91,8 +100,10 @@ function updateInquiry(input) {
   const customerId = String(input.customerId || '');
   const contactId = String(input.contactId || '');
   const assignedMemberId = String(input.assignedMemberId || '');
+  const category = String(input.category || '').trim();
 
   validateInquiryReferences_(spreadsheet, customerId, contactId, assignedMemberId);
+  validateInquiryCategory_(spreadsheet, category);
 
   const customerMatchStatus = customerId
     ? ((String(inquiry.customer_id || '') === customerId && String(inquiry.customer_match_status || '') !== 'UNMATCHED')
@@ -108,7 +119,7 @@ function updateInquiry(input) {
     status: status,
     priority: priority,
     assigned_member_id: assignedMemberId,
-    category: String(input.category || ''),
+    category: category,
     summary: String(input.summary || ''),
     next_action: String(input.nextAction || ''),
     due_date: parseOptionalDate_(input.dueDate),
@@ -141,6 +152,14 @@ function validateInquiryReferences_(spreadsheet, customerId, contactId, memberId
   }
   if (memberId && !members.some(function(row) { return String(row.member_id || '') === memberId; })) {
     throw new Error('Selected member does not exist.');
+  }
+}
+
+function validateInquiryCategory_(spreadsheet, category) {
+  if (!category) return;
+  const categories = readSheetObjects_(ensureInquiryCategorySheet_(spreadsheet));
+  if (!categories.some(function(row) { return String(row.category_name || '').trim() === category; })) {
+    throw new Error('選択した問い合わせ分類が存在しません。');
   }
 }
 
