@@ -1,6 +1,13 @@
 name: Deploy Development
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.clasp.json'
+      - '.github/workflows/deploy-gas.yml'
   workflow_dispatch:
 
 permissions:
