@@ -1,4 +1,7 @@
 <style>
+/* モバイル専用の戻るボタンはPCでは生成済みでも表示しない。 */
+.mobile-detail-back,.mobile-master-back{display:none}
+
 @media (max-width:760px){
   html,body{height:100%;min-height:100%;overflow:hidden}
   .app-shell{height:100dvh;min-height:100dvh;overflow:hidden}
@@ -40,7 +43,7 @@
 
   .inquiry-detail-pane{display:none;position:fixed!important;inset:0!important;z-index:80;background:#f8fafc!important;overflow:auto!important;overscroll-behavior:contain}
   #inquiryView.mobile-detail-open .inquiry-detail-pane{display:block}
-  .mobile-detail-back{position:sticky;top:0;z-index:5;width:100%;height:50px;border:0;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);text-align:left;padding:0 14px;font-weight:700;color:#1d4ed8;font-size:14px}
+  .mobile-detail-back{display:block;position:sticky;top:0;z-index:5;width:100%;height:50px;border:0;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);text-align:left;padding:0 14px;font-weight:700;color:#1d4ed8;font-size:14px;appearance:none;-webkit-appearance:none}
   .inquiry-detail-header{padding:14px 14px 10px!important}.inquiry-detail-header h2{font-size:18px!important}.detail-meta{line-height:1.5}
   .inquiry-form{padding:12px 14px!important;gap:10px!important}.form-two-columns,.form-three-columns{grid-template-columns:1fr!important;gap:10px!important}
   .inquiry-actions{position:sticky;bottom:0;background:#fff;padding:10px 0 2px;z-index:3}.inquiry-actions .button{min-width:110px}
@@ -56,7 +59,7 @@
   .master-row{padding:12px!important}
   .master-editor-pane{display:none;position:fixed!important;inset:0!important;width:auto!important;z-index:90!important;background:#fff;overflow:auto;box-shadow:none!important}
   .master-editor-pane.mobile-editor-open{display:block!important}
-  .mobile-master-back{position:sticky;top:0;z-index:5;width:100%;height:50px;border:0;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);text-align:left;padding:0 14px;font-weight:700;color:#1d4ed8;font-size:14px}
+  .mobile-master-back{display:block;position:sticky;top:0;z-index:5;width:100%;height:50px;border:0;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);text-align:left;padding:0 14px;font-weight:700;color:#1d4ed8;font-size:14px;appearance:none;-webkit-appearance:none}
   .master-form{padding:14px!important}.master-form .panel-actions{position:sticky;bottom:0;background:#fff;padding:10px 0 2px}
 }
 
