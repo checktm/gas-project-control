@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <title><?= appConfig.appName ?></title>
   <?!= include('Styles'); ?>
+  <?!= include('DashboardStyles'); ?>
   <?!= include('InquiryStyles'); ?>
   <?!= include('MasterStyles'); ?>
 </head>
@@ -13,13 +14,17 @@
     <header class="app-header">
       <div>
         <div class="app-title"><?= appConfig.appName ?></div>
-        <div id="screenTitle" class="project-title">問い合わせ管理</div>
+        <div id="screenTitle" class="project-title">ダッシュボード</div>
       </div>
       <nav class="main-nav" aria-label="主要機能">
-        <button id="navInquiries" class="nav-button active">問い合わせ</button>
+        <button id="navDashboard" class="nav-button active">ダッシュボード</button>
+        <button id="navInquiries" class="nav-button">問い合わせ</button>
         <button id="navMasters" class="nav-button">マスタ管理</button>
       </nav>
-      <div id="inquirySummary" class="project-summary">
+      <div id="dashboardSummary" class="project-summary">
+        <span>業務状況・デプロイ反映確認</span>
+      </div>
+      <div id="inquirySummary" class="project-summary hidden">
         <span id="inquiryCountSummary">問い合わせ 0件</span>
         <span id="unmatchedSummary">顧客未特定 0件</span>
       </div>
@@ -28,7 +33,73 @@
       </div>
     </header>
 
-    <section id="inquiryView" class="screen-view">
+    <section id="dashboardView" class="screen-view dashboard-view">
+      <div class="dashboard-hero">
+        <div>
+          <h1>ダッシュボード</h1>
+          <p>問い合わせ対応とマスタの状態を、最初の画面でまとめて確認できます。</p>
+        </div>
+        <div class="dashboard-hero-actions">
+          <span id="mailImportState" class="dashboard-chip">メール自動取込：確認中</span>
+          <span id="dashboardStatus" class="dashboard-chip">読み込み待ち</span>
+          <button id="refreshDashboard" class="button subtle">更新</button>
+        </div>
+      </div>
+
+      <div class="dashboard-kpis">
+        <article class="dashboard-card dashboard-kpi">
+          <div class="dashboard-kpi-label">未完了問い合わせ</div>
+          <div id="dashOpen" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">新規・対応中・顧客回答待ち</div>
+        </article>
+        <article class="dashboard-card dashboard-kpi attention">
+          <div class="dashboard-kpi-label">新規</div>
+          <div id="dashNew" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">まだ対応開始していない問い合わせ</div>
+        </article>
+        <article class="dashboard-card dashboard-kpi attention">
+          <div class="dashboard-kpi-label">顧客未特定</div>
+          <div id="dashUnmatched" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">未特定・候補複数</div>
+        </article>
+        <article class="dashboard-card dashboard-kpi danger">
+          <div class="dashboard-kpi-label">期限超過</div>
+          <div id="dashOverdue" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">未完了かつ対応期限を超過</div>
+        </article>
+      </div>
+
+      <div class="dashboard-main-grid">
+        <section class="dashboard-card dashboard-section">
+          <div class="dashboard-section-header">
+            <h2>最近の問い合わせ</h2>
+            <span>選択すると問い合わせ画面を開きます</span>
+          </div>
+          <div id="dashboardRecent" class="dashboard-recent"></div>
+          <div id="dashboardRecentEmpty" class="empty-state hidden"><strong>問い合わせはまだありません</strong></div>
+        </section>
+
+        <div class="dashboard-side-stack">
+          <section class="dashboard-card dashboard-section">
+            <div class="dashboard-section-header"><h2>マスタ登録状況</h2><span>有効件数</span></div>
+            <div class="dashboard-master-grid">
+              <div class="dashboard-master-item"><strong id="dashCustomers">0</strong><span>顧客</span></div>
+              <div class="dashboard-master-item"><strong id="dashContacts">0</strong><span>顧客担当者</span></div>
+              <div class="dashboard-master-item"><strong id="dashMembers">0</strong><span>社内メンバー</span></div>
+              <div class="dashboard-master-item"><strong id="dashCategories">0</strong><span>問い合わせ分類</span></div>
+            </div>
+          </section>
+
+          <section class="dashboard-card dashboard-section dashboard-build">
+            <div class="dashboard-section-header"><h2>デプロイ反映確認</h2><span>この画面のビルド</span></div>
+            <div class="dashboard-build-row"><div class="dashboard-build-label">Commit</div><div id="buildSha" class="dashboard-build-value">確認中</div></div>
+            <div class="dashboard-build-row"><div class="dashboard-build-label">Built at</div><div id="buildTime" class="dashboard-build-value">確認中</div></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="inquiryView" class="screen-view hidden">
       <section class="toolbar inquiry-toolbar">
         <div class="toolbar-group filters">
           <input id="inquirySearch" class="search-input" type="search" placeholder="顧客名・件名・送信元で検索">
@@ -167,6 +238,13 @@
     </section>
   </div>
 
+  <script>
+    window.APP_CONFIG_CLIENT = {
+      buildSha: '<?= appConfig.buildSha ?>',
+      buildTime: '<?= appConfig.buildTime ?>'
+    };
+  </script>
+  <?!= include('DashboardScript'); ?>
   <?!= include('InquiryScript'); ?>
   <?!= include('MasterScript'); ?>
 </body>
