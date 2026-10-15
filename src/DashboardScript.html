@@ -1,0 +1,67 @@
+<script>
+const dashboardState={data:null,loading:false};
+
+function loadDashboardData(force){
+  if(dashboardState.loading)return;
+  if(dashboardState.data&&!force){renderDashboard();return}
+  dashboardState.loading=true;
+  $('dashboardStatus').textContent='読み込み中...';
+  google.script.run
+    .withSuccessHandler(function(data){dashboardState.loading=false;dashboardState.data=data;renderDashboard()})
+    .withFailureHandler(function(error){
+      dashboardState.loading=false;
+      $('dashboardStatus').textContent='読み込みに失敗しました。'+(error&&error.message?error.message:String(error));
+    })
+    .getDashboardData();
+}
+
+function renderDashboard(){
+  const data=dashboardState.data||{summary:{},masters:{},recent:[]};
+  const s=data.summary||{};
+  const m=data.masters||{};
+  setDashboardText('dashOpen',s.open||0);
+  setDashboardText('dashNew',s.newCount||0);
+  setDashboardText('dashUnmatched',s.unmatched||0);
+  setDashboardText('dashOverdue',s.overdue||0);
+  setDashboardText('dashCustomers',m.customers||0);
+  setDashboardText('dashContacts',m.contacts||0);
+  setDashboardText('dashMembers',m.members||0);
+  setDashboardText('dashCategories',m.categories||0);
+  $('dashboardStatus').textContent='最終集計 '+formatLongDateTime(data.generatedAt||'');
+  $('mailImportState').textContent=data.mailImportEnabled?'メール自動取込：有効':'メール自動取込：無効';
+  $('mailImportState').className='dashboard-chip '+(data.mailImportEnabled?'ok':'warn');
+  renderDashboardBuild();
+  renderRecentInquiries(data.recent||[]);
+}
+
+function renderDashboardBuild(){
+  const config=window.APP_CONFIG_CLIENT||{};
+  $('buildSha').textContent=config.buildSha&&config.buildSha!=='__BUILD_SHA__'?config.buildSha:'未設定';
+  $('buildTime').textContent=config.buildTime&&config.buildTime!=='__BUILD_TIME__'?formatLongDateTime(config.buildTime):'未設定';
+}
+
+function renderRecentInquiries(items){
+  const container=$('dashboardRecent');
+  container.innerHTML='';
+  $('dashboardRecentEmpty').classList.toggle('hidden',items.length>0);
+  items.forEach(function(item){
+    const row=document.createElement('button');
+    row.type='button';
+    row.className='dashboard-recent-row';
+    row.dataset.inquiryId=item.id;
+    row.innerHTML='<span><strong>'+escapeHtml(item.subject||'(件名なし)')+'</strong><small>'+escapeHtml(item.customerName||'未特定')+' / '+escapeHtml(item.assignedMemberName||'未担当')+'</small></span>'+
+      '<span><small>'+escapeHtml(formatShortDateTime(item.lastMessageAt||''))+'</small><span class="status-pill '+inquiryStatusClass(item.status)+'">'+escapeHtml(inquiryStatusLabels[item.status]||item.status)+'</span></span>';
+    container.appendChild(row);
+  });
+}
+
+function setDashboardText(id,value){$(id).textContent=String(value)}
+
+function openDashboardInquiry(id){
+  switchMainView('inquiries');
+  if(inquiryState.data){inquiryState.selectedId=id;renderInquiryScreen();return}
+  const wait=setInterval(function(){
+    if(!inquiryState.loading&&inquiryState.data){clearInterval(wait);inquiryState.selectedId=id;renderInquiryScreen()}
+  },100);
+}
+</script>
