@@ -30,9 +30,10 @@ jobs:
           PROD_GAS_REFRESH_TOKEN: ${{ secrets.PROD_GAS_REFRESH_TOKEN }}
           PROD_GAS_SCRIPT_ID: ${{ secrets.PROD_GAS_SCRIPT_ID }}
           PROD_SPREADSHEET_ID: ${{ secrets.PROD_SPREADSHEET_ID }}
+          PROD_GEMINI_API_KEY: ${{ secrets.PROD_GEMINI_API_KEY }}
         run: |
           missing=0
-          for name in PROD_GAS_CLIENT_ID PROD_GAS_CLIENT_SECRET PROD_GAS_REFRESH_TOKEN PROD_GAS_SCRIPT_ID PROD_SPREADSHEET_ID; do
+          for name in PROD_GAS_CLIENT_ID PROD_GAS_CLIENT_SECRET PROD_GAS_REFRESH_TOKEN PROD_GAS_SCRIPT_ID PROD_SPREADSHEET_ID PROD_GEMINI_API_KEY; do
             if [ -z "${!name}" ]; then
               echo "$name secret is not configured."
               missing=1
@@ -77,10 +78,13 @@ jobs:
       - name: Inject production configuration
         env:
           PROD_SPREADSHEET_ID: ${{ secrets.PROD_SPREADSHEET_ID }}
+          PROD_GEMINI_API_KEY: ${{ secrets.PROD_GEMINI_API_KEY }}
         run: |
           python - <<'PY'
+          import json
           import os
           from pathlib import Path
+
           path = Path('src/Code.gs')
           text = path.read_text(encoding='utf-8')
           marker = '__SPREADSHEET_ID__'
@@ -88,12 +92,24 @@ jobs:
               raise SystemExit('Spreadsheet ID placeholder is missing from src/Code.gs')
           text = text.replace(marker, os.environ['PROD_SPREADSHEET_ID'])
           path.write_text(text, encoding='utf-8')
+
+          secret_path = Path('src/DeploymentSecrets.gs')
+          secret_text = secret_path.read_text(encoding='utf-8')
+          marker = '__GEMINI_API_KEY__'
+          if marker not in secret_text:
+              raise SystemExit('Gemini API key placeholder is missing from src/DeploymentSecrets.gs')
+          secret_text = secret_text.replace(marker, json.dumps(os.environ['PROD_GEMINI_API_KEY'])[1:-1])
+          secret_path.write_text(secret_text, encoding='utf-8')
           PY
 
       - name: Validate GAS source
         run: |
           if [ ! -f "src/appsscript.json" ]; then
             echo "src/appsscript.json is missing."
+            exit 1
+          fi
+          if grep -q '__GEMINI_API_KEY__' src/DeploymentSecrets.gs; then
+            echo "Gemini API key was not injected."
             exit 1
           fi
 
