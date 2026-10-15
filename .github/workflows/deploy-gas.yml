@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: deploy-development
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -38,9 +42,10 @@ jobs:
           GAS_CLIENT_ID: ${{ secrets.GAS_CLIENT_ID }}
           GAS_CLIENT_SECRET: ${{ secrets.GAS_CLIENT_SECRET }}
           GAS_REFRESH_TOKEN: ${{ secrets.GAS_REFRESH_TOKEN }}
+          DEV_GAS_DEPLOYMENT_ID: ${{ secrets.DEV_GAS_DEPLOYMENT_ID }}
         run: |
           missing=0
-          for name in GAS_CLIENT_ID GAS_CLIENT_SECRET GAS_REFRESH_TOKEN; do
+          for name in GAS_CLIENT_ID GAS_CLIENT_SECRET GAS_REFRESH_TOKEN DEV_GAS_DEPLOYMENT_ID; do
             if [ -z "${!name}" ]; then
               echo "$name secret is not configured."
               missing=1
@@ -95,7 +100,35 @@ jobs:
           fi
 
       - name: Show files to deploy
-        run: clasp status
+        run: clasp show-file-status
 
       - name: Push to development Apps Script
         run: clasp push --force
+
+      - name: Create development version
+        id: version
+        run: |
+          description="Development ${GITHUB_SHA::7}"
+          output="$(clasp create-version "$description")"
+          echo "$output"
+          version="$(printf '%s\n' "$output" | grep -Eo '[0-9]+' | tail -1)"
+          if [ -z "$version" ]; then
+            echo "Could not determine Apps Script version number."
+            exit 1
+          fi
+          echo "number=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Update development web app deployment
+        env:
+          DEV_GAS_DEPLOYMENT_ID: ${{ secrets.DEV_GAS_DEPLOYMENT_ID }}
+          VERSION_NUMBER: ${{ steps.version.outputs.number }}
+        run: |
+          clasp create-deployment \
+            --deploymentId "$DEV_GAS_DEPLOYMENT_ID" \
+            --versionNumber "$VERSION_NUMBER" \
+            --description "Development ${GITHUB_SHA::7}"
+
+      - name: Show deployment result
+        run: |
+          echo "Development source and versioned web app deployment were updated."
+          echo "Apps Script version: ${{ steps.version.outputs.number }}"
