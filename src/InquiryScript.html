@@ -1,0 +1,186 @@
+<script>
+const inquiryState={data:null,selectedId:null,loading:false};
+const inquiryStatusLabels={NEW:'新規',IN_PROGRESS:'対応中',WAITING_CUSTOMER:'顧客回答待ち',RESOLVED:'解決',CLOSED:'完了'};
+const inquiryPriorityLabels={HIGH:'高',MEDIUM:'中',LOW:'低'};
+const inquiryMatchLabels={EXACT_CONTACT:'担当者一致',DOMAIN_MATCH:'ドメイン一致',AMBIGUOUS:'候補複数',UNMATCHED:'顧客未特定',MANUAL:'手動設定'};
+
+function switchMainView(view){
+  const inquiry=view==='inquiries';
+  $('ganttView').classList.toggle('hidden',inquiry);
+  $('inquiryView').classList.toggle('hidden',!inquiry);
+  $('navGantt').classList.toggle('active',!inquiry);
+  $('navInquiries').classList.toggle('active',inquiry);
+  $('ganttSummary').classList.toggle('hidden',inquiry);
+  $('inquirySummary').classList.toggle('hidden',!inquiry);
+  $('screenTitle').textContent=inquiry?'問い合わせ管理':'社内基幹システム刷新';
+  if(inquiry){
+    if(typeof closePanel==='function')closePanel();
+    if(!inquiryState.data)loadInquiryData();
+  }else{
+    render();
+  }
+}
+
+function loadInquiryData(preserveSelection){
+  if(inquiryState.loading)return;
+  inquiryState.loading=true;
+  $('inquiryRows').innerHTML='<div class="loading-row">読み込み中...</div>';
+  $('inquiryEmpty').classList.add('hidden');
+  google.script.run
+    .withSuccessHandler(function(data){
+      inquiryState.loading=false;
+      inquiryState.data=data;
+      if(!preserveSelection||!findInquiry(inquiryState.selectedId))inquiryState.selectedId=null;
+      renderInquiryScreen();
+    })
+    .withFailureHandler(function(error){
+      inquiryState.loading=false;
+      $('inquiryRows').innerHTML='<div class="error-banner">読み込みに失敗しました。'+escapeHtml(error&&error.message?error.message:String(error))+'</div>';
+    })
+    .getInquiryScreenData();
+}
+
+function renderInquiryScreen(){
+  const data=inquiryState.data||{inquiries:[],customers:[],contacts:[],members:[]};
+  const filtered=getFilteredInquiries();
+  $('inquiryCountSummary').textContent='問い合わせ '+data.inquiries.length+'件';
+  const unmatched=data.inquiries.filter(i=>['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus)).length;
+  $('unmatchedSummary').textContent='顧客未特定 '+unmatched+'件';
+  $('inquiryRows').innerHTML='';
+  $('inquiryEmpty').classList.toggle('hidden',filtered.length>0);
+
+  filtered.forEach(function(inquiry){
+    const row=document.createElement('div');
+    row.className='inquiry-row inquiry-row-grid'+(inquiryState.selectedId===inquiry.id?' selected':'');
+    row.dataset.inquiryId=inquiry.id;
+    const customerName=inquiry.customerName||'未特定';
+    const sender=inquiry.messages&&inquiry.messages.length?inquiry.messages[inquiry.messages.length-1].fromEmail:'';
+    row.innerHTML=
+      '<div><div class="inquiry-primary">'+escapeHtml(formatShortDateTime(inquiry.lastMessageAt||inquiry.receivedAt))+'</div></div>'+
+      '<div><div class="inquiry-primary '+(!inquiry.customerName?'match-warning':'')+'">'+escapeHtml(customerName)+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.contactName||sender||'')+'</div></div>'+
+      '<div><div class="inquiry-primary"><span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(inquiry.subject||'(件名なし)')+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.category||inquiry.summary||'')+'</div></div>'+
+      '<div><div class="inquiry-primary">'+escapeHtml(inquiry.assignedMemberName||'未担当')+'</div></div>'+
+      '<div><span class="status-pill '+inquiryStatusClass(inquiry.status)+'">'+escapeHtml(inquiryStatusLabels[inquiry.status]||inquiry.status)+'</span></div>'+
+      '<div><div class="inquiry-primary">'+escapeHtml(inquiry.dueDate?formatDate(inquiry.dueDate):'—')+'</div></div>';
+    $('inquiryRows').appendChild(row);
+  });
+
+  renderInquiryDetail();
+}
+
+function getFilteredInquiries(){
+  if(!inquiryState.data)return[];
+  const q=String($('inquirySearch').value||'').trim().toLowerCase();
+  const status=$('inquiryStatusFilter').value;
+  const priority=$('inquiryPriorityFilter').value;
+  const unmatchedOnly=$('unmatchedOnly').checked;
+  return inquiryState.data.inquiries.filter(function(i){
+    const hay=[i.customerName,i.contactName,i.contactEmail,i.subject,i.summary,i.category]
+      .concat((i.messages||[]).map(m=>m.fromEmail)).join(' ').toLowerCase();
+    return(!q||hay.includes(q))&&(status==='all'||i.status===status)&&(priority==='all'||i.priority===priority)&&(!unmatchedOnly||['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus));
+  });
+}
+
+function renderInquiryDetail(){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  $('inquiryDetailEmpty').classList.toggle('hidden',!!inquiry);
+  $('inquiryDetailContent').classList.toggle('hidden',!inquiry);
+  if(!inquiry)return;
+
+  $('inquiryDetailSubject').textContent=inquiry.subject||'(件名なし)';
+  $('inquiryDetailMeta').textContent=(inquiry.receivedAt?'初回受信 '+formatLongDateTime(inquiry.receivedAt):'')+(inquiry.contactEmail?' / '+inquiry.contactEmail:'');
+  setMatchBadge(inquiry.customerMatchStatus);
+  fillSelect($('inquiryStatusInput'),(inquiryState.data.statusValues||[]).map(v=>({value:v,label:inquiryStatusLabels[v]||v})),inquiry.status,false);
+  fillSelect($('inquiryPriorityInput'),(inquiryState.data.priorityValues||[]).map(v=>({value:v,label:inquiryPriorityLabels[v]||v})),inquiry.priority,false);
+  fillSelect($('inquiryCustomerInput'),(inquiryState.data.customers||[]).filter(c=>c.status!=='INACTIVE').map(c=>({value:c.id,label:c.name||c.id})),inquiry.customerId,true,'未特定');
+  fillContactSelect(inquiry.customerId,inquiry.contactId);
+  fillSelect($('inquiryAssigneeInput'),(inquiryState.data.members||[]).filter(m=>m.active).map(m=>({value:m.id,label:m.name||m.id})),inquiry.assignedMemberId,true,'未担当');
+  $('inquiryCategoryInput').value=inquiry.category||'';
+  $('inquiryDueDateInput').value=inquiry.dueDate||'';
+  $('inquirySummaryInput').value=inquiry.summary||'';
+  $('inquiryNextActionInput').value=inquiry.nextAction||'';
+  $('inquiryFormMessage').textContent='';
+  $('inquiryUpdatedAt').textContent=inquiry.updatedAt?'最終更新 '+formatLongDateTime(inquiry.updatedAt):'';
+  renderInquiryMessages(inquiry.messages||[]);
+}
+
+function fillContactSelect(customerId,selectedId){
+  const contacts=(inquiryState.data.contacts||[]).filter(function(c){return c.active&&(!customerId||c.customerId===customerId)});
+  fillSelect($('inquiryContactInput'),contacts.map(c=>({value:c.id,label:(c.name||c.email||c.id)+(c.email&&c.name?' / '+c.email:'')})),selectedId,true,'未特定');
+}
+
+function renderInquiryMessages(messages){
+  $('messageCount').textContent=messages.length+'件';
+  $('inquiryMessages').innerHTML='';
+  if(!messages.length){
+    $('inquiryMessages').innerHTML='<div class="empty-state"><span>メール履歴はありません。</span></div>';
+    return;
+  }
+  messages.forEach(function(m){
+    const card=document.createElement('article');
+    card.className='mail-card '+String(m.direction||'INBOUND').toLowerCase();
+    card.innerHTML='<div class="mail-card-header"><span class="mail-card-from">'+escapeHtml((m.direction==='OUTBOUND'?'自社 → ':'顧客 → ')+(m.fromEmail||''))+'</span><span>'+escapeHtml(formatLongDateTime(m.sentAt))+'</span></div><div class="mail-card-subject">'+escapeHtml(m.subject||'(件名なし)')+'</div><div class="mail-card-body">'+escapeHtml(m.body||'')+'</div>';
+    $('inquiryMessages').appendChild(card);
+  });
+}
+
+function saveInquiry(e){
+  e.preventDefault();
+  const inquiry=findInquiry(inquiryState.selectedId);
+  if(!inquiry)return;
+  const customerId=$('inquiryCustomerInput').value;
+  const contactId=$('inquiryContactInput').value;
+  $('saveInquiryButton').disabled=true;
+  $('inquiryFormMessage').textContent='保存中...';
+  google.script.run
+    .withSuccessHandler(function(data){
+      $('saveInquiryButton').disabled=false;
+      inquiryState.data=data;
+      $('inquiryFormMessage').textContent='保存しました。';
+      renderInquiryScreen();
+    })
+    .withFailureHandler(function(error){
+      $('saveInquiryButton').disabled=false;
+      $('inquiryFormMessage').textContent='保存に失敗しました。'+(error&&error.message?error.message:String(error));
+    })
+    .updateInquiry({
+      inquiryId:inquiry.id,
+      customerId:customerId,
+      contactId:contactId,
+      status:$('inquiryStatusInput').value,
+      priority:$('inquiryPriorityInput').value,
+      assignedMemberId:$('inquiryAssigneeInput').value,
+      category:$('inquiryCategoryInput').value,
+      dueDate:$('inquiryDueDateInput').value,
+      summary:$('inquirySummaryInput').value,
+      nextAction:$('inquiryNextActionInput').value
+    });
+}
+
+function findInquiry(id){return inquiryState.data&&inquiryState.data.inquiries.find(i=>i.id===id)}
+function fillSelect(el,options,value,allowBlank,blankLabel){
+  el.innerHTML='';
+  if(allowBlank){const o=document.createElement('option');o.value='';o.textContent=blankLabel||'—';el.appendChild(o)}
+  options.forEach(function(item){const o=document.createElement('option');o.value=item.value;o.textContent=item.label;el.appendChild(o)});
+  el.value=value||'';
+}
+function setMatchBadge(status){
+  const el=$('customerMatchBadge');
+  el.textContent=inquiryMatchLabels[status]||status||'';
+  el.className='match-badge '+(['EXACT_CONTACT','MANUAL'].includes(status)?'ok':status==='DOMAIN_MATCH'?'warn':['AMBIGUOUS','UNMATCHED'].includes(status)?'danger':'');
+}
+function inquiryStatusClass(status){return status==='CLOSED'||status==='RESOLVED'?'done':status==='WAITING_CUSTOMER'?'hold':status==='IN_PROGRESS'?'progress':''}
+function formatDate(value){if(!value)return'';const p=String(value).slice(0,10).split('-');return p.length===3?p[0]+'/'+p[1]+'/'+p[2]:value}
+function formatShortDateTime(value){if(!value)return'—';const d=new Date(value);if(isNaN(d))return value;return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+function formatLongDateTime(value){if(!value)return'';const d=new Date(value);if(isNaN(d))return value;return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+function escapeHtml(value){return String(value==null?'':value).replace(/[&<>'"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]})}
+
+$('navGantt').onclick=function(){switchMainView('gantt')};
+$('navInquiries').onclick=function(){switchMainView('inquiries')};
+$('refreshInquiries').onclick=function(){loadInquiryData(true)};
+$('inquiryRows').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(!row)return;inquiryState.selectedId=row.dataset.inquiryId;renderInquiryScreen()};
+$('inquiryCustomerInput').onchange=function(){fillContactSelect(this.value,'')};
+$('inquiryForm').onsubmit=saveInquiry;
+['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(id=>$(id).onchange=renderInquiryScreen);
+$('inquirySearch').oninput=renderInquiryScreen;
+</script>
