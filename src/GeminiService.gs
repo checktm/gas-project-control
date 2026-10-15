@@ -1,9 +1,9 @@
 /**
  * Gemini API を利用したテキスト生成サービス。
- * APIキーは Script Properties の GEMINI_API_KEY から取得する。
+ * APIキーはGitHub ActionsがDeploymentSecrets.gsへ注入する。
  */
 function generateGeminiText_(prompt, model) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  const apiKey = getGeminiApiKey_();
   if (!apiKey) throw new Error('Gemini APIキーが設定されていません。');
 
   const modelName = String(model || '').trim();
@@ -68,4 +68,14 @@ function generateGeminiText_(prompt, model) {
     throw new Error(blocked ? 'Geminiが要約生成を停止しました。理由: ' + blocked : 'Geminiから要約文が返されませんでした。');
   }
   return text;
+}
+
+function getGeminiApiKey_() {
+  const injected = typeof DEPLOYMENT_SECRETS !== 'undefined'
+    ? String(DEPLOYMENT_SECRETS.geminiApiKey || '').trim()
+    : '';
+  if (injected && injected !== '__GEMINI_API_KEY__') return injected;
+
+  // 既存環境の移行用フォールバック。新規運用ではGitHub Secretを正本とする。
+  return String(PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
 }
