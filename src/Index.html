@@ -11,66 +11,164 @@
     <header class="app-header">
       <div>
         <div class="app-title"><?= appConfig.appName ?></div>
-        <div class="project-title">社内基幹システム刷新</div>
+        <div id="screenTitle" class="project-title">社内基幹システム刷新</div>
       </div>
-      <div class="project-summary">
+      <nav class="main-nav" aria-label="主要機能">
+        <button id="navGantt" class="nav-button active">ガント</button>
+        <button id="navInquiries" class="nav-button">問い合わせ</button>
+      </nav>
+      <div id="ganttSummary" class="project-summary">
         <span>2026/10/01 - 2027/03/31</span>
         <span>進捗 <strong>42%</strong></span>
         <span>試作版</span>
       </div>
+      <div id="inquirySummary" class="project-summary hidden">
+        <span id="inquiryCountSummary">問い合わせ 0件</span>
+        <span id="unmatchedSummary">顧客未特定 0件</span>
+      </div>
     </header>
 
-    <section class="toolbar">
-      <div class="toolbar-group">
-        <button id="prevPeriod" class="button subtle">←</button>
-        <button id="todayButton" class="button subtle">今日</button>
-        <button id="nextPeriod" class="button subtle">→</button>
-        <div class="segmented">
-          <button id="dayViewButton" class="segment active">日</button>
-          <button id="weekViewButton" class="segment">週</button>
+    <section id="ganttView" class="screen-view">
+      <section class="toolbar">
+        <div class="toolbar-group">
+          <button id="prevPeriod" class="button subtle">←</button>
+          <button id="todayButton" class="button subtle">今日</button>
+          <button id="nextPeriod" class="button subtle">→</button>
+          <div class="segmented">
+            <button id="dayViewButton" class="segment active">日</button>
+            <button id="weekViewButton" class="segment">週</button>
+          </div>
         </div>
-      </div>
 
-      <div class="toolbar-group filters">
-        <select id="assigneeFilter">
-          <option value="all">担当者：すべて</option>
-          <option value="佐藤">佐藤</option>
-          <option value="田中">田中</option>
-          <option value="鈴木">鈴木</option>
-        </select>
-        <select id="statusFilter">
-          <option value="all">状態：すべて</option>
-          <option value="未着手">未着手</option>
-          <option value="進行中">進行中</option>
-          <option value="完了">完了</option>
-          <option value="保留">保留</option>
-        </select>
-        <label class="checkbox-label"><input id="delayOnly" type="checkbox"> 遅延のみ</label>
-      </div>
+        <div class="toolbar-group filters">
+          <select id="assigneeFilter">
+            <option value="all">担当者：すべて</option>
+            <option value="佐藤">佐藤</option>
+            <option value="田中">田中</option>
+            <option value="鈴木">鈴木</option>
+          </select>
+          <select id="statusFilter">
+            <option value="all">状態：すべて</option>
+            <option value="未着手">未着手</option>
+            <option value="進行中">進行中</option>
+            <option value="完了">完了</option>
+            <option value="保留">保留</option>
+          </select>
+          <label class="checkbox-label"><input id="delayOnly" type="checkbox"> 遅延のみ</label>
+        </div>
 
-      <div class="toolbar-group toolbar-right">
-        <button id="expandAll" class="button subtle">すべて展開</button>
-        <button id="collapseAll" class="button subtle">すべて折りたたみ</button>
-        <button id="addTaskButton" class="button primary">＋ タスク追加</button>
-      </div>
+        <div class="toolbar-group toolbar-right">
+          <button id="expandAll" class="button subtle">すべて展開</button>
+          <button id="collapseAll" class="button subtle">すべて折りたたみ</button>
+          <button id="addTaskButton" class="button primary">＋ タスク追加</button>
+        </div>
+      </section>
+
+      <main class="gantt-layout">
+        <section class="task-pane">
+          <div class="task-header grid-row">
+            <div class="task-name-cell">タスク名</div>
+            <div>担当</div>
+            <div>進捗</div>
+            <div>状態</div>
+          </div>
+          <div id="taskRows" class="task-body"></div>
+        </section>
+
+        <section id="timelinePane" class="timeline-pane">
+          <div id="timelineHeader" class="timeline-header"></div>
+          <div id="timelineRows" class="timeline-body"></div>
+        </section>
+      </main>
     </section>
 
-    <main class="gantt-layout">
-      <section class="task-pane">
-        <div class="task-header grid-row">
-          <div class="task-name-cell">タスク名</div>
-          <div>担当</div>
-          <div>進捗</div>
-          <div>状態</div>
+    <section id="inquiryView" class="screen-view hidden">
+      <section class="toolbar inquiry-toolbar">
+        <div class="toolbar-group filters">
+          <input id="inquirySearch" class="search-input" type="search" placeholder="顧客名・件名・送信元で検索">
+          <select id="inquiryStatusFilter">
+            <option value="all">状態：すべて</option>
+            <option value="NEW">新規</option>
+            <option value="IN_PROGRESS">対応中</option>
+            <option value="WAITING_CUSTOMER">顧客回答待ち</option>
+            <option value="RESOLVED">解決</option>
+            <option value="CLOSED">完了</option>
+          </select>
+          <select id="inquiryPriorityFilter">
+            <option value="all">優先度：すべて</option>
+            <option value="HIGH">高</option>
+            <option value="MEDIUM">中</option>
+            <option value="LOW">低</option>
+          </select>
+          <label class="checkbox-label"><input id="unmatchedOnly" type="checkbox"> 顧客未特定のみ</label>
         </div>
-        <div id="taskRows" class="task-body"></div>
+        <div class="toolbar-group toolbar-right">
+          <button id="refreshInquiries" class="button subtle">更新</button>
+        </div>
       </section>
 
-      <section id="timelinePane" class="timeline-pane">
-        <div id="timelineHeader" class="timeline-header"></div>
-        <div id="timelineRows" class="timeline-body"></div>
-      </section>
-    </main>
+      <main class="inquiry-layout">
+        <section class="inquiry-list-pane">
+          <div class="inquiry-list-header inquiry-row-grid">
+            <div>受信</div><div>顧客</div><div>件名</div><div>担当</div><div>状態</div><div>期限</div>
+          </div>
+          <div id="inquiryRows" class="inquiry-list-body"></div>
+          <div id="inquiryEmpty" class="empty-state hidden">
+            <strong>問い合わせはまだありません</strong>
+            <span>メール取込を有効にすると、ここに自動登録されます。</span>
+          </div>
+        </section>
+
+        <aside id="inquiryDetail" class="inquiry-detail-pane">
+          <div id="inquiryDetailEmpty" class="detail-empty">
+            <div class="detail-empty-icon">✉</div>
+            <strong>問い合わせを選択してください</strong>
+            <span>一覧から問い合わせを選ぶと、メール履歴と管理情報を確認できます。</span>
+          </div>
+          <div id="inquiryDetailContent" class="hidden">
+            <div class="inquiry-detail-header">
+              <div>
+                <div class="panel-kicker">問い合わせ</div>
+                <h2 id="inquiryDetailSubject"></h2>
+                <div id="inquiryDetailMeta" class="detail-meta"></div>
+              </div>
+              <span id="customerMatchBadge" class="match-badge"></span>
+            </div>
+
+            <form id="inquiryForm" class="inquiry-form">
+              <div class="form-two-columns">
+                <label>顧客<select id="inquiryCustomerInput"></select></label>
+                <label>顧客担当者<select id="inquiryContactInput"></select></label>
+              </div>
+              <div class="form-three-columns">
+                <label>状態<select id="inquiryStatusInput"></select></label>
+                <label>優先度<select id="inquiryPriorityInput"></select></label>
+                <label>自社担当<select id="inquiryAssigneeInput"></select></label>
+              </div>
+              <div class="form-two-columns">
+                <label>分類<input id="inquiryCategoryInput" type="text" placeholder="例：不具合 / 見積依頼"></label>
+                <label>対応期限<input id="inquiryDueDateInput" type="date"></label>
+              </div>
+              <label>概要<textarea id="inquirySummaryInput" rows="2" placeholder="問い合わせの要点"></textarea></label>
+              <label>次回対応<textarea id="inquiryNextActionInput" rows="2" placeholder="次に行う対応"></textarea></label>
+              <div id="inquiryFormMessage" class="form-message"></div>
+              <div class="panel-actions inquiry-actions">
+                <span id="inquiryUpdatedAt" class="updated-label"></span>
+                <button type="submit" id="saveInquiryButton" class="button primary">保存</button>
+              </div>
+            </form>
+
+            <section class="message-section">
+              <div class="section-heading">
+                <h3>メール履歴</h3>
+                <span id="messageCount"></span>
+              </div>
+              <div id="inquiryMessages" class="message-list"></div>
+            </section>
+          </div>
+        </aside>
+      </main>
+    </section>
 
     <aside id="editPanel" class="edit-panel" aria-hidden="true">
       <div class="edit-panel-header">
