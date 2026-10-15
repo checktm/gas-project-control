@@ -1,0 +1,97 @@
+<script>
+(function(){
+  const mobileQuery=window.matchMedia('(max-width:760px)');
+
+  function ensureInquiryBackButton(){
+    if($('mobileInquiryBack'))return;
+    const pane=$('inquiryDetail');
+    if(!pane)return;
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='mobileInquiryBack';
+    button.className='mobile-detail-back';
+    button.textContent='← 問い合わせ一覧へ戻る';
+    button.onclick=function(){
+      $('inquiryView').classList.remove('mobile-detail-open');
+    };
+    pane.insertBefore(button,pane.firstChild);
+  }
+
+  function ensureMasterBackButton(){
+    if($('mobileMasterBack'))return;
+    const pane=document.querySelector('.master-editor-pane');
+    if(!pane)return;
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='mobileMasterBack';
+    button.className='mobile-master-back';
+    button.textContent='← マスタ一覧へ戻る';
+    button.onclick=function(){pane.classList.remove('mobile-editor-open')};
+    pane.insertBefore(button,pane.firstChild);
+  }
+
+  function syncInquiryMobileDetail(){
+    if(!mobileQuery.matches){
+      $('inquiryView').classList.remove('mobile-detail-open');
+      return;
+    }
+    if(inquiryState&&inquiryState.selectedId)$('inquiryView').classList.add('mobile-detail-open');
+  }
+
+  ensureInquiryBackButton();
+  ensureMasterBackButton();
+
+  const previousSelectInquiry=window.selectInquiry;
+  window.selectInquiry=function(id){
+    previousSelectInquiry(id);
+    if(mobileQuery.matches)$('inquiryView').classList.add('mobile-detail-open');
+  };
+
+  const previousOpenDashboardInquiry=window.openDashboardInquiry;
+  window.openDashboardInquiry=function(id){
+    previousOpenDashboardInquiry(id);
+    if(mobileQuery.matches){
+      const wait=setInterval(function(){
+        if(inquiryState&&inquiryState.selectedId===id){
+          clearInterval(wait);
+          $('inquiryView').classList.add('mobile-detail-open');
+        }
+      },80);
+      setTimeout(function(){clearInterval(wait)},5000);
+    }
+  };
+
+  const masterRows=$('masterRows');
+  if(masterRows){
+    masterRows.addEventListener('click',function(){
+      if(mobileQuery.matches){
+        setTimeout(function(){
+          const pane=document.querySelector('.master-editor-pane');
+          const form=$('masterForm');
+          if(pane&&form&&!form.classList.contains('hidden'))pane.classList.add('mobile-editor-open');
+        },0);
+      }
+    });
+  }
+
+  const newMasterButton=$('newMasterButton');
+  if(newMasterButton){
+    newMasterButton.addEventListener('click',function(){
+      if(mobileQuery.matches){
+        setTimeout(function(){
+          const pane=document.querySelector('.master-editor-pane');
+          if(pane)pane.classList.add('mobile-editor-open');
+        },0);
+      }
+    });
+  }
+
+  mobileQuery.addEventListener('change',function(){
+    syncInquiryMobileDetail();
+    if(!mobileQuery.matches){
+      const pane=document.querySelector('.master-editor-pane');
+      if(pane)pane.classList.remove('mobile-editor-open');
+    }
+  });
+})();
+</script>
