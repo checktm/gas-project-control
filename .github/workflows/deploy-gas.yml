@@ -79,6 +79,35 @@ jobs:
             }' > "$HOME/.clasprc.json"
           chmod 600 "$HOME/.clasprc.json"
 
+      - name: Verify OAuth scopes
+        env:
+          GAS_CLIENT_ID: ${{ secrets.GAS_CLIENT_ID }}
+          GAS_CLIENT_SECRET: ${{ secrets.GAS_CLIENT_SECRET }}
+          GAS_REFRESH_TOKEN: ${{ secrets.GAS_REFRESH_TOKEN }}
+        run: |
+          response="$(curl -sS -X POST https://oauth2.googleapis.com/token \
+            --data-urlencode "client_id=$GAS_CLIENT_ID" \
+            --data-urlencode "client_secret=$GAS_CLIENT_SECRET" \
+            --data-urlencode "refresh_token=$GAS_REFRESH_TOKEN" \
+            --data-urlencode "grant_type=refresh_token")"
+          access_token="$(printf '%s' "$response" | jq -r '.access_token // empty')"
+          if [ -z "$access_token" ]; then
+            echo "Could not exchange the refresh token for an access token."
+            printf '%s' "$response" | jq '{error, error_description}'
+            exit 1
+          fi
+          scope="$(curl -sS "https://oauth2.googleapis.com/tokeninfo?access_token=$access_token" | jq -r '.scope // empty')"
+          echo "Granted OAuth scopes:"
+          printf '%s\n' "$scope" | tr ' ' '\n' | sort
+          printf '%s' "$scope" | grep -q 'https://www.googleapis.com/auth/script.projects' || {
+            echo "Missing required scope: script.projects"
+            exit 1
+          }
+          printf '%s' "$scope" | grep -q 'https://www.googleapis.com/auth/script.deployments' || {
+            echo "Missing required scope: script.deployments"
+            exit 1
+          }
+
       - name: Inject development configuration
         run: |
           python - <<'PY'
