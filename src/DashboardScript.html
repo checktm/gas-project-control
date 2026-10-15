@@ -59,9 +59,9 @@ function setDashboardText(id,value){$(id).textContent=String(value)}
 
 function openDashboardInquiry(id){
   switchMainView('inquiries');
-  if(inquiryState.data){inquiryState.selectedId=id;renderInquiryScreen();return}
+  if(inquiryState.data){selectInquiry(id);return}
   const wait=setInterval(function(){
-    if(!inquiryState.loading&&inquiryState.data){clearInterval(wait);inquiryState.selectedId=id;renderInquiryScreen()}
+    if(!inquiryState.loading&&inquiryState.data){clearInterval(wait);selectInquiry(id)}
   },100);
 }
 </script>
