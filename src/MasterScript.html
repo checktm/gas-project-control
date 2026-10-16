@@ -128,7 +128,7 @@ function saveMaster(e){
 }
 
 function customerNameById(id){const c=(masterState.data&&masterState.data.customers||[]).find(x=>x.id===id);return c?c.name:'顧客未設定'}
-function settingLabel(key){return {INQUIRY_GROUP_ADDRESS:'問い合わせ受付アドレス',MAIL_SEARCH_QUERY:'メール検索条件',MAIL_IMPORT_MAX_THREADS:'1回の最大スレッド数',MAIL_IMPORT_ENABLED:'メール自動取込'}[key]||key}
+function settingLabel(key){return {INQUIRY_GROUP_ADDRESS:'問い合わせ受付アドレス',MAIL_SEARCH_QUERY:'メール検索条件',MAIL_IMPORT_MAX_THREADS:'1回の最大スレッド数',MAIL_IMPORT_ENABLED:'メール自動取込',INTERNAL_MAIL_DOMAINS:'自社メールドメイン',INTERNAL_MAIL_ADDRESSES:'自社メールアドレス'}[key]||key}
 function maskSettingValue(key,value){if(key==='MAIL_IMPORT_ENABLED')return value==='TRUE'?'有効':'無効';return String(value||'')}
 function escapeAttr(value){return escapeHtml(value).replace(/`/g,'&#96;')}
 
