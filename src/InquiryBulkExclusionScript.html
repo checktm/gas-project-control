@@ -140,9 +140,9 @@
     const ids=Array.from(selectedForExclusion);
     if(!ids.length)return;
     const confirmed=window.confirm(
-      '選択した '+ids.length+' 件を問い合わせ一覧・ダッシュボードの対象外にします。\n\n'+
-      '選択していない既存問い合わせは、同じドメインでも非表示にはなりません。\n'+
-      '送信元ドメインは今後の対象外判定用にも登録します。データ自体は削除されません。続けますか？'
+      '選択した '+ids.length+' 件の送信元ドメインを、問い合わせ対象外として登録します。\n\n'+
+      '登録したドメインから開始した問い合わせは、既存分も含めて一覧・ダッシュボードから非表示になります。\n'+
+      '登録していない別ドメインには影響しません。データ自体は削除されません。続けますか？'
     );
     if(!confirmed)return;
 
@@ -158,11 +158,9 @@
         if(typeof masterState!=='undefined')masterState.data=null;
         renderInquiryScreen();
         if(typeof loadDashboardData==='function')loadDashboardData(true);
-        const excluded=result&&Array.isArray(result.excludedInquiryIds)?result.excludedInquiryIds:[];
         const domains=result&&Array.isArray(result.domains)?result.domains:[];
         const skipped=result&&Array.isArray(result.skipped)?result.skipped:[];
-        let message=excluded.length+'件を問い合わせ対象外にしました。';
-        if(domains.length)message+='\n'+domains.length+'ドメインを今後の対象外判定用に登録しました。';
+        let message=domains.length+'ドメインを問い合わせ対象外に登録しました。';
         if(skipped.length)message+='\n'+skipped.length+'件は顧客特定済み等の理由で対象外登録しませんでした。';
         window.alert(message);
       })
