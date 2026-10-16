@@ -36,7 +36,7 @@
         button.textContent=originalText;
         window.alert('顧客の再判定に失敗しました。\n'+(error&&error.message?error.message:String(error)));
       })
-      .reassessUnmatchedInquiries();
+      .reassessUnmatchedInquiriesV2();
   };
 })();
 </script>
