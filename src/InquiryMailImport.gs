@@ -16,9 +16,12 @@ const INQUIRY_SETTINGS = {
 
 /**
  * Googleグループ等の問い合わせ受付アドレス宛にGmailへ配信されたメールを問い合わせとして取り込む。
- * Settings の MAIL_IMPORT_ENABLED が TRUE の場合のみ実行する。
+ * 通常の時間主導トリガーでは MAIL_IMPORT_ENABLED が TRUE の場合のみ実行する。
+ * 画面からの手動実行時は { force: true } を渡し、自動取込設定にかかわらず1回だけ実行できる。
  */
-function importInquiryEmails() {
+function importInquiryEmails(options) {
+  options = options || {};
+  const force = options.force === true;
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) {
     console.log('Inquiry mail import is already running.');
@@ -29,7 +32,7 @@ function importInquiryEmails() {
     const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
     const settings = loadSettings_(spreadsheet);
 
-    if (!isTrue_(settings[INQUIRY_SETTINGS.enabled])) {
+    if (!force && !isTrue_(settings[INQUIRY_SETTINGS.enabled])) {
       return { imported: 0, skipped: 0, errors: 0, reason: 'DISABLED' };
     }
 
@@ -115,7 +118,7 @@ function importInquiryEmails() {
       });
     });
 
-    return { imported: imported, skipped: skipped, errors: errors, query: query };
+    return { imported: imported, skipped: skipped, errors: errors, query: query, manual: force };
   } finally {
     lock.releaseLock();
   }
