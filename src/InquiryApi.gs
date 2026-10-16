@@ -100,8 +100,9 @@ function getInquiryMessages(inquiryId) {
     return serializeInquiryMessage_(row);
   });
 
+  // UIでは最新のやり取りを最初に確認できるよう新しい順で返す。
   messages.sort(function(a, b) {
-    return String(a.sentAt).localeCompare(String(b.sentAt));
+    return String(b.sentAt).localeCompare(String(a.sentAt));
   });
   return messages;
 }
@@ -217,84 +218,56 @@ function toInquiryTime_(value) {
  */
 function updateInquiry(input) {
   if (!input || !input.inquiryId) throw new Error('inquiryId is required.');
-
+  input = input || {};
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const inquirySheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries);
-  const inquiries = readSheetObjects_(inquirySheet);
-  const inquiry = inquiries.find(function(row) {
-    return String(row.inquiry_id || '') === String(input.inquiryId);
-  });
-  if (!inquiry) throw new Error('Inquiry not found: ' + input.inquiryId);
+  const rows = readSheetObjects_(inquirySheet);
+  const row = rows.find(function(item) { return String(item.inquiry_id || '') === String(input.inquiryId || ''); });
+  if (!row) throw new Error('問い合わせが見つかりません。');
 
-  const status = String(input.status || 'NEW');
-  const priority = String(input.priority || 'MEDIUM');
-  if (INQUIRY_STATUS_VALUES.indexOf(status) < 0) throw new Error('Invalid inquiry status.');
-  if (INQUIRY_PRIORITY_VALUES.indexOf(priority) < 0) throw new Error('Invalid inquiry priority.');
+  const customerId = String(input.customerId || '').trim();
+  const contactId = String(input.contactId || '').trim();
+  const assignedMemberId = String(input.assignedMemberId || '').trim();
+  const status = String(input.status || '').trim();
+  const priority = String(input.priority || '').trim();
 
-  const customerId = String(input.customerId || '');
-  const contactId = String(input.contactId || '');
-  const assignedMemberId = String(input.assignedMemberId || '');
-  const category = String(input.category || '').trim();
+  if (status && INQUIRY_STATUS_VALUES.indexOf(status) < 0) throw new Error('問い合わせ状態が不正です。');
+  if (priority && INQUIRY_PRIORITY_VALUES.indexOf(priority) < 0) throw new Error('優先度が不正です。');
 
-  validateInquiryReferences_(spreadsheet, customerId, contactId, assignedMemberId);
-  validateInquiryCategory_(spreadsheet, category);
+  const customers = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.customers));
+  const contacts = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.contacts));
+  const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
+  if (customerId && !customers.some(function(item) { return String(item.customer_id || '') === customerId; })) throw new Error('顧客が見つかりません。');
+  const contact = contactId ? contacts.find(function(item) { return String(item.contact_id || '') === contactId; }) : null;
+  if (contactId && !contact) throw new Error('顧客担当者が見つかりません。');
+  if (contact && customerId && String(contact.customer_id || '') !== customerId) throw new Error('顧客担当者が選択した顧客に属していません。');
+  if (assignedMemberId && !members.some(function(item) { return String(item.member_id || '') === assignedMemberId; })) throw new Error('社内担当者が見つかりません。');
 
-  const customerMatchStatus = customerId
-    ? ((String(inquiry.customer_id || '') === customerId && String(inquiry.customer_match_status || '') !== 'UNMATCHED')
-      ? String(inquiry.customer_match_status || 'MANUAL')
-      : 'MANUAL')
-    : 'UNMATCHED';
-
-  const headers = inquirySheet.getRange(1, 1, 1, inquirySheet.getLastColumn()).getValues()[0];
-  const rowValues = inquirySheet.getRange(inquiry._rowIndex, 1, 1, inquirySheet.getLastColumn()).getValues()[0];
-  const updates = {
+  const customerChanged = String(row.customer_id || '') !== customerId || String(row.contact_id || '') !== contactId;
+  writeRowUpdates_(inquirySheet, row._rowIndex, {
     customer_id: customerId,
     contact_id: contactId,
-    status: status,
-    priority: priority,
+    status: status || 'NEW',
+    priority: priority || 'MEDIUM',
     assigned_member_id: assignedMemberId,
-    category: category,
-    summary: String(input.summary || ''),
-    next_action: String(input.nextAction || ''),
-    due_date: parseOptionalDate_(input.dueDate),
-    customer_match_status: customerMatchStatus,
+    category: String(input.category || '').trim(),
+    summary: String(input.summary || '').trim(),
+    next_action: String(input.nextAction || '').trim(),
+    due_date: String(input.dueDate || '').trim(),
+    customer_match_status: customerChanged ? 'MANUAL' : String(row.customer_match_status || 'UNMATCHED'),
     updated_at: new Date()
-  };
-
-  headers.forEach(function(header, index) {
-    if (Object.prototype.hasOwnProperty.call(updates, header)) rowValues[index] = updates[header];
   });
-  inquirySheet.getRange(inquiry._rowIndex, 1, 1, rowValues.length).setValues([rowValues]);
 
   return getInquiryScreenData();
 }
 
-function validateInquiryReferences_(spreadsheet, customerId, contactId, memberId) {
-  const customers = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.customers));
-  const contacts = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.contacts));
-  const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
-
-  if (customerId && !customers.some(function(row) { return String(row.customer_id || '') === customerId; })) {
-    throw new Error('Selected customer does not exist.');
-  }
-  if (contactId) {
-    const contact = contacts.find(function(row) { return String(row.contact_id || '') === contactId; });
-    if (!contact) throw new Error('Selected contact does not exist.');
-    if (customerId && String(contact.customer_id || '') !== customerId) {
-      throw new Error('Selected contact does not belong to selected customer.');
-    }
-  }
-  if (memberId && !members.some(function(row) { return String(row.member_id || '') === memberId; })) {
-    throw new Error('Selected member does not exist.');
-  }
-}
-
-function validateInquiryCategory_(spreadsheet, category) {
-  if (!category) return;
-  const categories = readSheetObjects_(ensureInquiryCategorySheet_(spreadsheet));
-  if (!categories.some(function(row) { return String(row.category_name || '').trim() === category; })) {
-    throw new Error('選択した問い合わせ分類が存在しません。');
-  }
+function indexBy_(rows, key) {
+  const result = {};
+  rows.forEach(function(row) {
+    const value = String(row[key] || '');
+    if (value) result[value] = row;
+  });
+  return result;
 }
 
 function serializeInquiry_(row, customer, contact, member) {
@@ -305,7 +278,6 @@ function serializeInquiry_(row, customer, contact, member) {
     contactId: String(row.contact_id || ''),
     contactName: String(contact.contact_name || ''),
     contactEmail: String(contact.email || ''),
-    gmailThreadId: String(row.gmail_thread_id || ''),
     subject: String(row.subject || ''),
     status: String(row.status || 'NEW'),
     priority: String(row.priority || 'MEDIUM'),
@@ -334,26 +306,8 @@ function serializeInquiryMessage_(row) {
   };
 }
 
-function indexBy_(rows, key) {
-  const result = {};
-  rows.forEach(function(row) {
-    const value = String(row[key] || '');
-    if (value) result[value] = row;
-  });
-  return result;
-}
-
-function parseOptionalDate_(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const parts = text.split('-');
-  if (parts.length !== 3) throw new Error('Invalid date.');
-  return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-}
-
 function formatDateForClient_(value, pattern) {
   if (!value) return '';
-  const date = value instanceof Date ? value : new Date(value);
-  if (isNaN(date.getTime())) return '';
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), pattern);
+  if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone(), pattern);
+  return String(value);
 }
