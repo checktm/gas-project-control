@@ -1,0 +1,42 @@
+<script>
+(function(){
+  const button=$('reassessUnmatchedInquiries');
+  if(!button)return;
+
+  button.onclick=function(){
+    const data=inquiryState.data||{inquiries:[]};
+    const unmatched=(data.inquiries||[]).filter(function(inquiry){
+      return inquiry.customerMatchStatus==='UNMATCHED'||inquiry.customerMatchStatus==='AMBIGUOUS';
+    }).length;
+
+    if(!unmatched){
+      window.alert('再判定が必要な問い合わせはありません。');
+      return;
+    }
+    if(!window.confirm('顧客未特定・候補複数の問い合わせ '+unmatched+'件を、現在の顧客・担当者マスタで再判定します。よろしいですか？'))return;
+
+    button.disabled=true;
+    const originalText=button.textContent;
+    button.textContent='再判定中...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        button.disabled=false;
+        button.textContent=originalText;
+        if(result&&result.data)inquiryState.data=result.data;
+        renderInquiryScreen();
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+        const checked=Number(result&&result.checked||0);
+        const matched=Number(result&&result.matched||0);
+        const remaining=Number(result&&result.remaining||0);
+        window.alert('再判定しました。\n対象: '+checked+'件\n自動特定: '+matched+'件\n未特定のまま: '+remaining+'件');
+      })
+      .withFailureHandler(function(error){
+        button.disabled=false;
+        button.textContent=originalText;
+        window.alert('顧客の再判定に失敗しました。\n'+(error&&error.message?error.message:String(error)));
+      })
+      .reassessUnmatchedInquiries();
+  };
+})();
+</script>
