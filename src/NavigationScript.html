@@ -97,6 +97,69 @@ function ensureInquiryReplyUi(){
   $('inquiryReplyBody').oninput=updateInquiryReplyUi;
 }
 
+function ensureInquiryCommunicationWorkspace(){
+  if($('inquiryCommunicationWorkspace'))return;
+  const detail=$('inquiryDetailContent');
+  const reply=document.querySelector('#inquiryDetailContent .inquiry-reply-section');
+  const messages=document.querySelector('#inquiryDetailContent .message-section');
+  if(!detail||!reply||!messages)return;
+
+  const workspace=document.createElement('section');
+  workspace.id='inquiryCommunicationWorkspace';
+  workspace.className='inquiry-communication-workspace';
+
+  const tabs=document.createElement('div');
+  tabs.className='inquiry-communication-tabs';
+  tabs.innerHTML='\
+    <button type="button" class="inquiry-communication-tab active" data-communication-tab="reply">返信</button>\
+    <button type="button" class="inquiry-communication-tab" data-communication-tab="history">メール履歴 <span id="communicationMessageCount"></span></button>';
+
+  const body=document.createElement('div');
+  body.className='inquiry-communication-body';
+  const replyPanel=document.createElement('div');
+  replyPanel.className='inquiry-communication-panel active';
+  replyPanel.dataset.communicationPanel='reply';
+  const historyPanel=document.createElement('div');
+  historyPanel.className='inquiry-communication-panel';
+  historyPanel.dataset.communicationPanel='history';
+
+  reply.parentNode.insertBefore(workspace,reply);
+  workspace.appendChild(tabs);
+  workspace.appendChild(body);
+  body.appendChild(replyPanel);
+  body.appendChild(historyPanel);
+  replyPanel.appendChild(reply);
+  historyPanel.appendChild(messages);
+
+  tabs.onclick=function(e){
+    const button=e.target.closest('[data-communication-tab]');
+    if(!button)return;
+    setInquiryCommunicationTab(button.dataset.communicationTab);
+  };
+}
+
+function setInquiryCommunicationTab(tab){
+  const workspace=$('inquiryCommunicationWorkspace');
+  if(!workspace)return;
+  workspace.querySelectorAll('[data-communication-tab]').forEach(function(button){
+    button.classList.toggle('active',button.dataset.communicationTab===tab);
+  });
+  workspace.querySelectorAll('[data-communication-panel]').forEach(function(panel){
+    panel.classList.toggle('active',panel.dataset.communicationPanel===tab);
+  });
+}
+
+function syncCommunicationMessageCount(){
+  const count=$('communicationMessageCount');
+  if(!count)return;
+  const id=String(inquiryState.selectedId||'');
+  if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id)){
+    count.textContent='';
+    return;
+  }
+  count.textContent='('+String((inquiryState.messagesByInquiry[id]||[]).length)+')';
+}
+
 function getLatestInboundMessageForReply(){
   const id=String(inquiryState.selectedId||'');
   if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))return null;
@@ -169,6 +232,7 @@ function sendInquiryReplyFromScreen(){
       status.className='reply-status success';
       status.textContent='返信を送信しました。';
       updateInquiryReplyUi();
+      syncCommunicationMessageCount();
       if(typeof loadDashboardData==='function')loadDashboardData(true);
     })
     .withFailureHandler(function(error){
@@ -185,15 +249,54 @@ function installInquiryEnhancementStyles(){
   const style=document.createElement('style');
   style.id='inquiryEnhancementStyles';
   style.textContent='\
-    .ai-summary-controls{display:flex;align-items:center;gap:10px;margin-top:-4px}\
-    .ai-summary-controls .button{padding:7px 11px}\
-    .ai-summary-status{font-size:11px;color:#64748b}\
+    .ai-summary-controls{display:flex;align-items:center;gap:8px;margin-top:-3px;min-height:30px}\
+    .ai-summary-controls .button{padding:5px 9px}\
+    .ai-summary-status{font-size:10px;color:#64748b;line-height:1.3}\
     .ai-summary-status.success,.reply-status.success{color:#166534}\
     .ai-summary-status.error,.reply-status.error{color:#b91c1c}\
-    .inquiry-reply-section{margin-top:18px;padding:16px;border-radius:14px;background:rgba(255,255,255,.56);box-shadow:inset 2px 2px 5px rgba(148,163,184,.16),inset -2px -2px 5px rgba(255,255,255,.8)}\
-    .inquiry-reply-heading{margin-bottom:8px}.inquiry-reply-heading>div{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}\
-    .reply-recipient{font-size:11px;color:#64748b}.reply-textarea{width:100%;min-height:110px;resize:vertical;box-sizing:border-box}\
-    .reply-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px}.reply-status{font-size:11px;color:#64748b;min-height:16px}\
+    @media(min-width:761px){\
+      .inquiry-detail-pane{overflow:hidden!important}\
+      #inquiryDetailContent:not(.hidden){height:100%;min-height:0;display:flex!important;flex-direction:column}\
+      .inquiry-detail-header{flex:0 0 auto;padding:11px 16px 8px!important}\
+      .inquiry-detail-header h2{font-size:17px!important;margin:2px 0 3px!important;line-height:1.25!important;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}\
+      .detail-meta{font-size:10px!important}\
+      .match-badge{font-size:10px!important;padding:4px 7px!important}\
+      .inquiry-form{flex:0 0 auto;padding:9px 16px 8px!important;gap:7px!important}\
+      .inquiry-form label{gap:3px!important;font-size:11px!important}\
+      .inquiry-form input,.inquiry-form select{padding:6px 8px!important;min-height:32px}\
+      .inquiry-form textarea{padding:6px 8px!important;min-height:38px!important;max-height:48px;resize:vertical}\
+      #inquirySummaryInput{min-height:36px!important;max-height:42px!important}\
+      #inquiryNextActionInput{min-height:36px!important;max-height:42px!important}\
+      .form-two-columns,.form-three-columns{gap:7px!important}\
+      .inquiry-actions{padding-top:4px!important;min-height:38px}\
+      .inquiry-actions .button{padding:6px 12px}\
+      .updated-label{font-size:10px!important}\
+      .inquiry-communication-workspace{flex:1 1 auto;min-height:150px;display:flex;flex-direction:column;border-top:1px solid #e2e8f0;background:#f8fafc}\
+      .inquiry-communication-tabs{flex:0 0 auto;display:flex;gap:4px;padding:7px 12px 0;background:#fff;border-bottom:1px solid #e2e8f0}\
+      .inquiry-communication-tab{border:0;background:transparent;padding:7px 12px 8px;color:#64748b;font-weight:700;cursor:pointer;border-bottom:2px solid transparent}\
+      .inquiry-communication-tab.active{color:#1d4ed8;border-bottom-color:#2563eb}\
+      .inquiry-communication-body{flex:1 1 auto;min-height:0;position:relative}\
+      .inquiry-communication-panel{display:none;height:100%;min-height:0;overflow:auto}\
+      .inquiry-communication-panel.active{display:block}\
+      .inquiry-reply-section{margin:0!important;padding:14px 16px!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;min-height:100%}\
+      .inquiry-reply-heading{margin-bottom:7px!important}.inquiry-reply-heading>div{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}\
+      .reply-textarea{width:100%;min-height:96px;max-height:180px;resize:vertical;box-sizing:border-box}\
+      .reply-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:8px}.reply-status{font-size:11px;color:#64748b;min-height:16px}\
+      .message-section{padding:12px 16px 18px!important;min-height:100%;background:#f8fafc}\
+      .message-section>.section-heading{display:none}\
+      .message-list{gap:8px!important}\
+      .mail-card{padding:10px 12px!important}\
+      .mail-card-body{max-height:none!important}\
+    }\
+    @media(max-width:760px){\
+      .inquiry-communication-workspace{margin-top:0;border-top:1px solid #e2e8f0;background:#f8fafc}\
+      .inquiry-communication-tabs{display:flex;position:sticky;top:50px;z-index:4;background:#fff;border-bottom:1px solid #e2e8f0;padding:6px 10px 0}\
+      .inquiry-communication-tab{flex:1;border:0;background:transparent;padding:10px;color:#64748b;font-weight:700;border-bottom:2px solid transparent}\
+      .inquiry-communication-tab.active{color:#1d4ed8;border-bottom-color:#2563eb}\
+      .inquiry-communication-panel{display:none}\
+      .inquiry-communication-panel.active{display:block}\
+      .inquiry-reply-section{margin:0!important;border-radius:0!important}\
+    }\
   ';
   document.head.appendChild(style);
 }
@@ -203,14 +306,20 @@ window.renderInquiryDetail=function(){
   originalRenderInquiryDetail();
   ensureInquiryAiSummaryUi();
   ensureInquiryReplyUi();
+  ensureInquiryCommunicationWorkspace();
   updateInquiryReplyUi();
+  syncCommunicationMessageCount();
 };
 
 const originalSelectInquiry=window.selectInquiry;
 window.selectInquiry=function(id){
-  if(String(inquiryState.selectedId||'')!==String(id||''))clearReplyDraftForInquiryChange();
+  if(String(inquiryState.selectedId||'')!==String(id||'')){
+    clearReplyDraftForInquiryChange();
+    setInquiryCommunicationTab('reply');
+  }
   originalSelectInquiry(id);
   updateInquiryReplyUi();
+  syncCommunicationMessageCount();
 };
 
 $('navDashboard').onclick=function(){switchMainView('dashboard')};
@@ -222,5 +331,6 @@ $('dashboardRecent').onclick=function(e){const row=e.target.closest('[data-inqui
 installInquiryEnhancementStyles();
 ensureInquiryAiSummaryUi();
 ensureInquiryReplyUi();
+ensureInquiryCommunicationWorkspace();
 switchMainView('dashboard');
 </script>
