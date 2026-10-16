@@ -121,6 +121,7 @@
           <label class="checkbox-label"><input id="unmatchedOnly" type="checkbox"> 顧客未特定のみ</label>
         </div>
         <div class="toolbar-group toolbar-right">
+          <button id="reassessUnmatchedInquiries" class="button subtle">未特定を再判定</button>
           <button id="refreshInquiries" class="button subtle">更新</button>
         </div>
       </section>
@@ -249,6 +250,7 @@
   <?!= include('InquiryScript'); ?>
   <?!= include('MasterScript'); ?>
   <?!= include('NavigationScript'); ?>
+  <?!= include('InquiryReassessScript'); ?>
   <?!= include('MobileScript'); ?>
 </body>
 </html>
