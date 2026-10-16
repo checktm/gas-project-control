@@ -10,7 +10,9 @@ const INQUIRY_SETTINGS = {
   enabled: 'MAIL_IMPORT_ENABLED',
   groupAddress: 'INQUIRY_GROUP_ADDRESS',
   searchQuery: 'MAIL_SEARCH_QUERY',
-  maxThreads: 'MAIL_IMPORT_MAX_THREADS'
+  maxThreads: 'MAIL_IMPORT_MAX_THREADS',
+  internalDomains: 'INTERNAL_MAIL_DOMAINS',
+  internalAddresses: 'INTERNAL_MAIL_ADDRESSES'
 };
 
 /**
@@ -46,7 +48,7 @@ function importInquiryEmails() {
     const importedMessageIds = loadColumnSet_(messageSheet, 'gmail_message_id');
     const inquiryByThreadId = loadRows_(inquirySheet, 'gmail_thread_id');
     const customerData = loadCustomerMatchData_(spreadsheet);
-    const internalAddresses = loadInternalMailAddresses_(groupAddress);
+    const internalIdentity = loadInternalMailIdentity_(settings, groupAddress);
 
     let imported = 0;
     let skipped = 0;
@@ -65,9 +67,7 @@ function importInquiryEmails() {
             return;
           }
 
-          // Gmail検索結果はスレッド単位なので、同一スレッド内の各メールを
-          // From / To / Cc と自社アドレス集合から受信・送信に分類する。
-          const direction = classifyInquiryMessageDirection_(message, internalAddresses);
+          const direction = classifyInquiryMessageDirection_(message, internalIdentity);
           if (!direction) {
             skipped += 1;
             return;
@@ -77,8 +77,6 @@ function importInquiryEmails() {
           const fromEmail = extractEmailAddress_(message.getFrom());
           let inquiry = inquiryByThreadId[gmailThreadId];
 
-          // 問い合わせは顧客からの受信を起点に作成する。
-          // OUTBOUNDだけが先に見つかった場合は、後続のINBOUNDで作成するためスキップする。
           if (!inquiry && direction !== 'INBOUND') {
             skipped += 1;
             return;
@@ -137,12 +135,12 @@ function previewInquiryMailCandidates() {
 
   const query = buildInquiryMailQuery_(settings, groupAddress);
   const threads = GmailApp.search(query, 0, 10);
-  const internalAddresses = loadInternalMailAddresses_(groupAddress);
+  const internalIdentity = loadInternalMailIdentity_(settings, groupAddress);
   const result = [];
 
   threads.forEach(function(thread) {
     thread.getMessages().forEach(function(message) {
-      const direction = classifyInquiryMessageDirection_(message, internalAddresses);
+      const direction = classifyInquiryMessageDirection_(message, internalIdentity);
       if (direction) {
         result.push({
           gmailMessageId: message.getId(),
@@ -159,6 +157,64 @@ function previewInquiryMailCandidates() {
   });
 
   return result.slice(0, 20);
+}
+
+/**
+ * 既存のInquiryMessages.directionを現在の自社メール設定で再判定する。
+ * 過去に一律INBOUNDで保存されたデータの補正を想定し、Fromだけで受信/送信を決める。
+ */
+function reclassifyInquiryMessageDirections() {
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const settings = loadSettings_(spreadsheet);
+  const configuredDomains = parseSettingList_(settings[INQUIRY_SETTINGS.internalDomains]);
+  const configuredAddresses = parseSettingList_(settings[INQUIRY_SETTINGS.internalAddresses]);
+  if (!configuredDomains.length && !configuredAddresses.length) {
+    throw new Error('INTERNAL_MAIL_DOMAINS または INTERNAL_MAIL_ADDRESSES を先に設定してください。');
+  }
+
+  const groupAddress = normalizeEmail_(settings[INQUIRY_SETTINGS.groupAddress]);
+  const internalIdentity = loadInternalMailIdentity_(settings, groupAddress);
+  const sheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.messages);
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 2 || lastColumn < 1) {
+    return { checked: 0, changed: 0, inbound: 0, outbound: 0 };
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  const directionIndex = headers.indexOf('direction');
+  const fromIndex = headers.indexOf('from_email');
+  if (directionIndex < 0 || fromIndex < 0) {
+    throw new Error('InquiryMessages に direction / from_email 列がありません。');
+  }
+
+  const rowCount = lastRow - 1;
+  const directions = sheet.getRange(2, directionIndex + 1, rowCount, 1).getValues();
+  const fromEmails = sheet.getRange(2, fromIndex + 1, rowCount, 1).getValues();
+  let checked = 0;
+  let changed = 0;
+  let inbound = 0;
+  let outbound = 0;
+
+  for (let i = 0; i < rowCount; i += 1) {
+    const fromEmail = extractEmailAddress_(fromEmails[i][0]) || normalizeEmail_(fromEmails[i][0]);
+    if (!fromEmail || fromEmail.indexOf('@') < 0) continue;
+    checked += 1;
+    const direction = isInternalEmail_(fromEmail, internalIdentity) ? 'OUTBOUND' : 'INBOUND';
+    if (direction === 'OUTBOUND') outbound += 1;
+    else inbound += 1;
+    if (String(directions[i][0] || '').toUpperCase() !== direction) {
+      directions[i][0] = direction;
+      changed += 1;
+    }
+  }
+
+  if (changed > 0) {
+    sheet.getRange(2, directionIndex + 1, rowCount, 1).setValues(directions);
+  }
+  return { checked: checked, changed: changed, inbound: inbound, outbound: outbound };
 }
 
 /**
@@ -190,39 +246,63 @@ function buildInquiryMailQuery_(settings, groupAddress) {
 }
 
 /**
- * 自社側として扱うメールアドレスを集める。
- * 問い合わせ受付アドレスに加え、実行ユーザーとGmail送信元エイリアスを含める。
+ * 自社側メールの判定情報を作る。
+ * INTERNAL_MAIL_DOMAINS / INTERNAL_MAIL_ADDRESSES を正本とし、受付アドレス、実行ユーザー、
+ * Gmail送信元エイリアスも補助的に自社アドレスへ追加する。
  */
-function loadInternalMailAddresses_(groupAddress) {
+function loadInternalMailIdentity_(settings, groupAddress) {
   const addresses = new Set();
+  const domains = new Set();
 
-  function add(value) {
+  function addAddress(value) {
     const email = extractEmailAddress_(value) || normalizeEmail_(value);
     if (email && email.indexOf('@') >= 0) addresses.add(email);
   }
+  function addDomain(value) {
+    const domain = normalizeMatchDomain_(value);
+    if (domain) domains.add(domain);
+  }
 
-  add(groupAddress);
-  try { add(Session.getEffectiveUser().getEmail()); } catch (ignore) {}
-  try { add(Session.getActiveUser().getEmail()); } catch (ignore) {}
+  parseSettingList_(settings[INQUIRY_SETTINGS.internalAddresses]).forEach(addAddress);
+  parseSettingList_(settings[INQUIRY_SETTINGS.internalDomains]).forEach(addDomain);
+  addAddress(groupAddress);
+  try { addAddress(Session.getEffectiveUser().getEmail()); } catch (ignore) {}
+  try { addAddress(Session.getActiveUser().getEmail()); } catch (ignore) {}
   try {
-    (GmailApp.getAliases() || []).forEach(function(alias) { add(alias); });
+    (GmailApp.getAliases() || []).forEach(function(alias) { addAddress(alias); });
   } catch (ignore) {}
 
-  return addresses;
+  return { addresses: addresses, domains: domains };
+}
+
+function parseSettingList_(value) {
+  return String(value == null ? '' : value)
+    .split(/[\n,;]+/)
+    .map(function(item) { return String(item || '').trim(); })
+    .filter(function(item) { return !!item; });
+}
+
+function isInternalEmail_(email, internalIdentity) {
+  const normalized = extractEmailAddress_(email) || normalizeEmail_(email);
+  if (!normalized || normalized.indexOf('@') < 0) return false;
+  if (internalIdentity.addresses.has(normalized)) return true;
+  const domain = normalizeMatchDomain_(normalized.split('@').slice(-1)[0]);
+  return !!domain && internalIdentity.domains.has(domain);
 }
 
 /**
  * メール方向を判定する。
- * Fromが自社アドレスならOUTBOUND、自社アドレスがTo/Ccに含まれればINBOUNDとする。
- * どちらにも該当しないスレッド内メールは誤取込防止のため対象外とする。
+ * Fromが自社アドレス/自社ドメインならOUTBOUND、それ以外の送信元はINBOUNDとする。
+ * Fromが取得できない場合だけTo/Ccを補助判定に使う。
  */
-function classifyInquiryMessageDirection_(message, internalAddresses) {
+function classifyInquiryMessageDirection_(message, internalIdentity) {
   const fromEmail = extractEmailAddress_(message.getFrom());
-  if (fromEmail && internalAddresses.has(fromEmail)) return 'OUTBOUND';
+  if (fromEmail) {
+    return isInternalEmail_(fromEmail, internalIdentity) ? 'OUTBOUND' : 'INBOUND';
+  }
 
   const recipients = extractEmailAddresses_([message.getTo(), message.getCc()].join(','));
-  if (recipients.some(function(email) { return internalAddresses.has(email); })) return 'INBOUND';
-
+  if (recipients.some(function(email) { return isInternalEmail_(email, internalIdentity); })) return 'INBOUND';
   return '';
 }
 
