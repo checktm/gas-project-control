@@ -30,7 +30,7 @@
   .inquiry-toolbar .filters{display:grid!important;grid-template-columns:1fr 1fr;gap:8px!important;width:100%}
   .inquiry-toolbar .search-input{grid-column:1/-1;width:100%!important}
   .inquiry-toolbar .checkbox-label{grid-column:1/-1;min-height:38px}
-  .inquiry-toolbar .toolbar-right{margin:0!important;width:100%}.inquiry-toolbar .toolbar-right .button{width:100%}
+  .inquiry-toolbar .toolbar-right{margin:0!important;width:100%;display:grid!important;grid-template-columns:1fr 1fr;gap:8px!important}.inquiry-toolbar .toolbar-right .button{width:100%;min-width:0}
   .inquiry-layout{display:block!important;min-height:0;overflow:hidden}
   .inquiry-list-pane{height:100%;border-right:0!important}
   .inquiry-list-header{display:none!important}
@@ -67,6 +67,7 @@
   .dashboard-kpis{grid-template-columns:1fr!important}
   .inquiry-toolbar .filters{grid-template-columns:1fr}
   .inquiry-toolbar .search-input,.inquiry-toolbar .checkbox-label{grid-column:auto}
+  .inquiry-toolbar .toolbar-right{grid-template-columns:1fr}
   .app-title{display:none}
 }
 </style>
