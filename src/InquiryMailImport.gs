@@ -11,12 +11,11 @@ const INQUIRY_SETTINGS = {
   groupAddress: 'INQUIRY_GROUP_ADDRESS',
   searchQuery: 'MAIL_SEARCH_QUERY',
   maxThreads: 'MAIL_IMPORT_MAX_THREADS',
-  internalDomains: 'INTERNAL_MAIL_DOMAINS',
-  internalAddresses: 'INTERNAL_MAIL_ADDRESSES'
+  internalDomains: 'INTERNAL_MAIL_DOMAINS'
 };
 
 /**
- * Googleグループ宛にGmailへ配信されたメールを問い合わせとして取り込む。
+ * Googleグループ等の問い合わせ受付アドレス宛にGmailへ配信されたメールを問い合わせとして取り込む。
  * Settings の MAIL_IMPORT_ENABLED が TRUE の場合のみ実行する。
  */
 function importInquiryEmails() {
@@ -34,12 +33,12 @@ function importInquiryEmails() {
       return { imported: 0, skipped: 0, errors: 0, reason: 'DISABLED' };
     }
 
-    const groupAddress = normalizeEmail_(settings[INQUIRY_SETTINGS.groupAddress]);
-    if (!groupAddress) {
+    const receptionAddresses = getInquiryReceptionAddresses_(settings);
+    if (!receptionAddresses.length) {
       throw new Error('INQUIRY_GROUP_ADDRESS is not configured.');
     }
 
-    const query = buildInquiryMailQuery_(settings, groupAddress);
+    const query = buildInquiryMailQuery_(settings, receptionAddresses);
     const maxThreads = Math.max(1, Number(settings[INQUIRY_SETTINGS.maxThreads]) || 50);
     const threads = GmailApp.search(query, 0, maxThreads).slice().reverse();
 
@@ -48,7 +47,7 @@ function importInquiryEmails() {
     const importedMessageIds = loadColumnSet_(messageSheet, 'gmail_message_id');
     const inquiryByThreadId = loadRows_(inquirySheet, 'gmail_thread_id');
     const customerData = loadCustomerMatchData_(spreadsheet);
-    const internalIdentity = loadInternalMailIdentity_(settings, groupAddress);
+    const internalIdentity = loadInternalMailIdentity_(spreadsheet, settings, receptionAddresses);
 
     let imported = 0;
     let skipped = 0;
@@ -128,14 +127,14 @@ function importInquiryEmails() {
 function previewInquiryMailCandidates() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const settings = loadSettings_(spreadsheet);
-  const groupAddress = normalizeEmail_(settings[INQUIRY_SETTINGS.groupAddress]);
-  if (!groupAddress) {
+  const receptionAddresses = getInquiryReceptionAddresses_(settings);
+  if (!receptionAddresses.length) {
     throw new Error('INQUIRY_GROUP_ADDRESS is not configured.');
   }
 
-  const query = buildInquiryMailQuery_(settings, groupAddress);
+  const query = buildInquiryMailQuery_(settings, receptionAddresses);
   const threads = GmailApp.search(query, 0, 10);
-  const internalIdentity = loadInternalMailIdentity_(settings, groupAddress);
+  const internalIdentity = loadInternalMailIdentity_(spreadsheet, settings, receptionAddresses);
   const result = [];
 
   threads.forEach(function(thread) {
@@ -161,19 +160,17 @@ function previewInquiryMailCandidates() {
 
 /**
  * 既存のInquiryMessages.directionを現在の自社メール設定で再判定する。
- * 過去に一律INBOUNDで保存されたデータの補正を想定し、Fromだけで受信/送信を決める。
+ * 自社メールアドレスは有効なMembers.emailと問い合わせ受付アドレスから組み立てる。
  */
 function reclassifyInquiryMessageDirections() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const settings = loadSettings_(spreadsheet);
-  const configuredDomains = parseSettingList_(settings[INQUIRY_SETTINGS.internalDomains]);
-  const configuredAddresses = parseSettingList_(settings[INQUIRY_SETTINGS.internalAddresses]);
-  if (!configuredDomains.length && !configuredAddresses.length) {
-    throw new Error('INTERNAL_MAIL_DOMAINS または INTERNAL_MAIL_ADDRESSES を先に設定してください。');
+  const receptionAddresses = getInquiryReceptionAddresses_(settings);
+  const internalIdentity = loadInternalMailIdentity_(spreadsheet, settings, receptionAddresses);
+  if (!internalIdentity.domains.size && !internalIdentity.addresses.size) {
+    throw new Error('INTERNAL_MAIL_DOMAINS、社内メンバーのメールアドレス、問い合わせ受付アドレスのいずれかを設定してください。');
   }
 
-  const groupAddress = normalizeEmail_(settings[INQUIRY_SETTINGS.groupAddress]);
-  const internalIdentity = loadInternalMailIdentity_(settings, groupAddress);
   const sheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.messages);
   const lastRow = sheet.getLastRow();
   const lastColumn = sheet.getLastColumn();
@@ -226,7 +223,7 @@ function installInquiryMailImportTrigger() {
   if (!isTrue_(settings[INQUIRY_SETTINGS.enabled])) {
     throw new Error('MAIL_IMPORT_ENABLED must be TRUE before installing the trigger.');
   }
-  if (!normalizeEmail_(settings[INQUIRY_SETTINGS.groupAddress])) {
+  if (!getInquiryReceptionAddresses_(settings).length) {
     throw new Error('INQUIRY_GROUP_ADDRESS is not configured.');
   }
 
@@ -240,17 +237,42 @@ function installInquiryMailImportTrigger() {
     .create();
 }
 
-function buildInquiryMailQuery_(settings, groupAddress) {
+/**
+ * 受付アドレス設定は既存keyを維持したまま複数値を許可する。
+ */
+function getInquiryReceptionAddresses_(settings) {
+  const seen = {};
+  return parseSettingList_(settings[INQUIRY_SETTINGS.groupAddress]).map(function(value) {
+    return extractEmailAddress_(value) || normalizeEmail_(value);
+  }).filter(function(email) {
+    if (!email || email.indexOf('@') < 1 || seen[email]) return false;
+    seen[email] = true;
+    return true;
+  });
+}
+
+/**
+ * 既存の to:{GROUP_ADDRESS} を維持しつつ、複数受付時はGmailのOR検索へ展開する。
+ */
+function buildInquiryMailQuery_(settings, receptionAddresses) {
   const template = String(settings[INQUIRY_SETTINGS.searchQuery] || 'to:{GROUP_ADDRESS} newer_than:30d').trim();
-  return template.replace(/\{GROUP_ADDRESS\}/g, groupAddress);
+  const addresses = receptionAddresses || [];
+  if (!addresses.length) return template;
+  const recipientQuery = addresses.length === 1
+    ? 'to:' + addresses[0]
+    : '{' + addresses.map(function(address) { return 'to:' + address; }).join(' ') + '}';
+  return template
+    .replace(/to:\{GROUP_ADDRESS\}/g, recipientQuery)
+    .replace(/\{GROUP_ADDRESS_QUERY\}/g, recipientQuery)
+    .replace(/\{GROUP_ADDRESS\}/g, addresses[0]);
 }
 
 /**
  * 自社側メールの判定情報を作る。
- * INTERNAL_MAIL_DOMAINS / INTERNAL_MAIL_ADDRESSES を正本とし、受付アドレス、実行ユーザー、
- * Gmail送信元エイリアスも補助的に自社アドレスへ追加する。
+ * 個別アドレスは手入力せず、問い合わせ受付アドレスと有効な社内メンバーのメールアドレスから生成する。
+ * 自社ドメインはINTERNAL_MAIL_DOMAINSを利用する。
  */
-function loadInternalMailIdentity_(settings, groupAddress) {
+function loadInternalMailIdentity_(spreadsheet, settings, receptionAddresses) {
   const addresses = new Set();
   const domains = new Set();
 
@@ -263,14 +285,12 @@ function loadInternalMailIdentity_(settings, groupAddress) {
     if (domain) domains.add(domain);
   }
 
-  parseSettingList_(settings[INQUIRY_SETTINGS.internalAddresses]).forEach(addAddress);
   parseSettingList_(settings[INQUIRY_SETTINGS.internalDomains]).forEach(addDomain);
-  addAddress(groupAddress);
-  try { addAddress(Session.getEffectiveUser().getEmail()); } catch (ignore) {}
-  try { addAddress(Session.getActiveUser().getEmail()); } catch (ignore) {}
-  try {
-    (GmailApp.getAliases() || []).forEach(function(alias) { addAddress(alias); });
-  } catch (ignore) {}
+  (receptionAddresses || []).forEach(addAddress);
+
+  readSheetObjects_(requireSheet_(spreadsheet, 'Members')).forEach(function(member) {
+    if (!isFalse_(member.active)) addAddress(member.email);
+  });
 
   return { addresses: addresses, domains: domains };
 }
