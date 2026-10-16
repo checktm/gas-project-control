@@ -1,9 +1,10 @@
-/** 問い合わせメール履歴からAI要約候補を生成する。保存はしない。 */
+/** 問い合わせメール履歴からAI詳細候補を生成する。保存はしない。 */
 function generateInquirySummary(inquiryId) {
   const id = String(inquiryId || '').trim();
   if (!id) throw new Error('inquiryId is required.');
 
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  ensureInquirySummaryDetailSchema_(spreadsheet);
   const settings = readAiSettings_(spreadsheet);
   if (!settings.enabled) throw new Error('AI要約機能は無効です。');
 
@@ -20,16 +21,17 @@ function generateInquirySummary(inquiryId) {
   const history = buildAiHistory_(messages, settings.maxInputChars);
   const prompt = [
     'あなたは業務問い合わせを整理するアシスタントです。',
-    '以下のメール履歴を、担当者が短時間で状況把握できる日本語の概要にしてください。',
+    '以下のメール履歴を、担当者が短時間で状況把握できる日本語の詳細情報にしてください。',
     '要件:',
     '- 3〜6行程度で簡潔にまとめる',
     '- 問い合わせの主旨と顧客が求めていることを優先する',
     '- 期限・希望日・重要条件があれば含める',
     '- メールにない内容を推測しない',
     '- 挨拶、署名、定型文は原則省略する',
-    '- そのまま概要欄へ貼れる文章だけを返す',
+    '- そのまま詳細欄へ貼れる文章だけを返す',
     '',
-    '問い合わせ件名: ' + String(inquiry.subject || ''),
+    '問い合わせ概要: ' + String(inquiry.summary || inquiry.subject || ''),
+    'メール件名: ' + String(inquiry.subject || ''),
     '',
     'メール履歴:',
     history
@@ -37,6 +39,7 @@ function generateInquirySummary(inquiryId) {
 
   const generated = generateGeminiTextWithMeta_(prompt, settings.model, settings.fallbackModel);
   return {
+    // 既存クライアント互換のためsummaryキーで返すが、画面上は「詳細」へ設定する。
     summary: generated.text,
     generatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss"),
     model: generated.model,
