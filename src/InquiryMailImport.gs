@@ -46,6 +46,7 @@ function importInquiryEmails() {
     const importedMessageIds = loadColumnSet_(messageSheet, 'gmail_message_id');
     const inquiryByThreadId = loadRows_(inquirySheet, 'gmail_thread_id');
     const customerData = loadCustomerMatchData_(spreadsheet);
+    const internalAddresses = loadInternalMailAddresses_(groupAddress);
 
     let imported = 0;
     let skipped = 0;
@@ -64,18 +65,27 @@ function importInquiryEmails() {
             return;
           }
 
-          // Gmail検索はスレッド単位で返るため、スレッド内の別宛先メールを誤取込しない。
-          if (!messageTargetsAddress_(message, groupAddress)) {
+          // Gmail検索結果はスレッド単位なので、同一スレッド内の各メールを
+          // From / To / Cc と自社アドレス集合から受信・送信に分類する。
+          const direction = classifyInquiryMessageDirection_(message, internalAddresses);
+          if (!direction) {
             skipped += 1;
             return;
           }
 
           const gmailThreadId = thread.getId();
           const fromEmail = extractEmailAddress_(message.getFrom());
-          const matchedCustomer = matchCustomer_(fromEmail, customerData);
           let inquiry = inquiryByThreadId[gmailThreadId];
 
+          // 問い合わせは顧客からの受信を起点に作成する。
+          // OUTBOUNDだけが先に見つかった場合は、後続のINBOUNDで作成するためスキップする。
+          if (!inquiry && direction !== 'INBOUND') {
+            skipped += 1;
+            return;
+          }
+
           if (!inquiry) {
+            const matchedCustomer = matchCustomer_(fromEmail, customerData);
             inquiry = createInquiry_(inquirySheet, {
               gmailThreadId: gmailThreadId,
               subject: message.getSubject(),
@@ -91,6 +101,7 @@ function importInquiryEmails() {
             inquiryId: inquiry.inquiry_id,
             gmailMessageId: gmailMessageId,
             gmailThreadId: gmailThreadId,
+            direction: direction,
             fromEmail: fromEmail,
             toEmail: message.getTo(),
             subject: message.getSubject(),
@@ -126,14 +137,17 @@ function previewInquiryMailCandidates() {
 
   const query = buildInquiryMailQuery_(settings, groupAddress);
   const threads = GmailApp.search(query, 0, 10);
+  const internalAddresses = loadInternalMailAddresses_(groupAddress);
   const result = [];
 
   threads.forEach(function(thread) {
     thread.getMessages().forEach(function(message) {
-      if (messageTargetsAddress_(message, groupAddress)) {
+      const direction = classifyInquiryMessageDirection_(message, internalAddresses);
+      if (direction) {
         result.push({
           gmailMessageId: message.getId(),
           gmailThreadId: thread.getId(),
+          direction: direction,
           from: message.getFrom(),
           to: message.getTo(),
           cc: message.getCc(),
@@ -175,9 +189,52 @@ function buildInquiryMailQuery_(settings, groupAddress) {
   return template.replace(/\{GROUP_ADDRESS\}/g, groupAddress);
 }
 
-function messageTargetsAddress_(message, groupAddress) {
-  const recipients = [message.getTo(), message.getCc()].join(',').toLowerCase();
-  return recipients.indexOf(groupAddress) !== -1;
+/**
+ * 自社側として扱うメールアドレスを集める。
+ * 問い合わせ受付アドレスに加え、実行ユーザーとGmail送信元エイリアスを含める。
+ */
+function loadInternalMailAddresses_(groupAddress) {
+  const addresses = new Set();
+
+  function add(value) {
+    const email = extractEmailAddress_(value) || normalizeEmail_(value);
+    if (email && email.indexOf('@') >= 0) addresses.add(email);
+  }
+
+  add(groupAddress);
+  try { add(Session.getEffectiveUser().getEmail()); } catch (ignore) {}
+  try { add(Session.getActiveUser().getEmail()); } catch (ignore) {}
+  try {
+    (GmailApp.getAliases() || []).forEach(function(alias) { add(alias); });
+  } catch (ignore) {}
+
+  return addresses;
+}
+
+/**
+ * メール方向を判定する。
+ * Fromが自社アドレスならOUTBOUND、自社アドレスがTo/Ccに含まれればINBOUNDとする。
+ * どちらにも該当しないスレッド内メールは誤取込防止のため対象外とする。
+ */
+function classifyInquiryMessageDirection_(message, internalAddresses) {
+  const fromEmail = extractEmailAddress_(message.getFrom());
+  if (fromEmail && internalAddresses.has(fromEmail)) return 'OUTBOUND';
+
+  const recipients = extractEmailAddresses_([message.getTo(), message.getCc()].join(','));
+  if (recipients.some(function(email) { return internalAddresses.has(email); })) return 'INBOUND';
+
+  return '';
+}
+
+function extractEmailAddresses_(value) {
+  const text = String(value || '');
+  const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig) || [];
+  const seen = {};
+  return matches.map(normalizeEmail_).filter(function(email) {
+    if (!email || seen[email]) return false;
+    seen[email] = true;
+    return true;
+  });
 }
 
 function loadSettings_(spreadsheet) {
@@ -301,7 +358,7 @@ function appendInquiryMessage_(sheet, input) {
     input.inquiryId,
     input.gmailMessageId,
     input.gmailThreadId,
-    'INBOUND',
+    input.direction,
     input.fromEmail,
     input.toEmail || '',
     input.subject || '',
