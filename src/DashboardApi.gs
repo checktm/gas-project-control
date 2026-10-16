@@ -1,6 +1,7 @@
 function getDashboardData() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
-  const inquiries = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
+  const allInquiries = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
+  const inquiries = filterInquiryRowsByExcludedDomains_(spreadsheet, allInquiries);
   const customers = readSheetObjects_(requireSheet_(spreadsheet, 'Customers'));
   const contacts = readSheetObjects_(requireSheet_(spreadsheet, 'CustomerContacts'));
   const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
