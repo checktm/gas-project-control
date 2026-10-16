@@ -6,6 +6,7 @@ function sendInquiryReply(input) {
   input = input || {};
   const inquiryId = String(input.inquiryId || '').trim();
   const body = String(input.body || '').trim();
+  const cc = normalizeInquiryReplyCc_(input.cc);
   if (!inquiryId) throw new Error('inquiryId is required.');
   if (!body) throw new Error('返信本文を入力してください。');
   if (body.length > 20000) throw new Error('返信本文が長すぎます。20,000文字以内にしてください。');
@@ -31,13 +32,17 @@ function sendInquiryReply(input) {
     beforeIds[message.getId()] = true;
   });
 
-  // GmailMessage.reply() を使うことで、元メールのReply-Toを尊重して同一スレッドへ返信する。
-  sourceMessage.reply(body);
+  // GmailMessage.reply() を使い、Reply-Toと元スレッドを維持する。
+  // CCは画面で確認・編集した値だけを追加する。
+  if (cc.length) {
+    sourceMessage.reply(body, { cc: cc.join(',') });
+  } else {
+    sourceMessage.reply(body);
+  }
 
   const sentMessage = findNewThreadMessageAfterReply_(thread, beforeIds);
   appendOutboundReply_(spreadsheet, inquiry, target, body, sentMessage);
 
-  // 一覧の最終メール日時も送信時刻へ更新する。
   const sentAt = sentMessage ? sentMessage.getDate() : new Date();
   writeRowUpdates_(inquirySheet, inquiry._rowIndex, {
     last_message_at: sentAt,
@@ -46,6 +51,7 @@ function sendInquiryReply(input) {
 
   return {
     recipient: target.replyTo || target.fromEmail,
+    cc: cc,
     sentAt: formatDateForClient_(sentAt, "yyyy-MM-dd'T'HH:mm:ss"),
     messages: getInquiryMessages(inquiryId),
     inquiryData: getInquiryScreenData()
@@ -66,15 +72,44 @@ function findLatestInboundReplyTarget_(spreadsheet, inquiryId) {
   });
   const row = rows[0];
   let replyTo = '';
+  let sourceCc = '';
   try {
     const gmailMessage = GmailApp.getMessageById(String(row.gmail_message_id || ''));
-    replyTo = gmailMessage ? String(gmailMessage.getReplyTo() || '').trim() : '';
+    if (gmailMessage) {
+      replyTo = String(gmailMessage.getReplyTo() || '').trim();
+      sourceCc = String(gmailMessage.getCc() || '').trim();
+    }
   } catch (ignore) {}
   return {
     gmailMessageId: String(row.gmail_message_id || ''),
     fromEmail: String(row.from_email || ''),
-    replyTo: replyTo
+    replyTo: replyTo,
+    sourceCc: sourceCc
   };
+}
+
+/** 画面入力されたCCを正規化・検証する。 */
+function normalizeInquiryReplyCc_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return [];
+  if (text.length > 2000) throw new Error('CCが長すぎます。');
+
+  const tokens = text.split(/[\n,;]+/).map(function(item) {
+    return String(item || '').trim();
+  }).filter(function(item) { return !!item; });
+  const result = [];
+  const seen = {};
+  tokens.forEach(function(token) {
+    const email = extractEmailAddress_(token) || normalizeEmail_(token);
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('CCのメールアドレスを確認してください: ' + token);
+    }
+    if (!seen[email]) {
+      seen[email] = true;
+      result.push(email);
+    }
+  });
+  return result;
 }
 
 /** 返信後にスレッドへ追加されたメールを特定する。 */
