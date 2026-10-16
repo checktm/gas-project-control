@@ -160,10 +160,49 @@ function renderInquiryMessages(messages){
   }
   messages.forEach(function(m){
     const card=document.createElement('article');
+    const inbound=String(m.direction||'INBOUND').toUpperCase()==='INBOUND';
+    const splitButton=inbound?'<button type="button" class="mail-split-button" data-split-message-id="'+escapeHtml(m.id)+'">別問い合わせ</button>':'';
     card.className='mail-card '+String(m.direction||'INBOUND').toLowerCase();
-    card.innerHTML='<div class="mail-card-header"><span class="mail-card-from">'+escapeHtml((m.direction==='OUTBOUND'?'自社 → ':'顧客 → ')+(m.fromEmail||''))+'</span><span>'+escapeHtml(formatLongDateTime(m.sentAt))+'</span></div><div class="mail-card-subject">'+escapeHtml(m.subject||'(件名なし)')+'</div><div class="mail-card-body">'+escapeHtml(m.body||'')+'</div>';
+    card.innerHTML='<div class="mail-card-header"><span class="mail-card-from">'+escapeHtml((m.direction==='OUTBOUND'?'自社 → ':'顧客 → ')+(m.fromEmail||''))+'</span><span class="mail-card-header-right"><span>'+escapeHtml(formatLongDateTime(m.sentAt))+'</span>'+splitButton+'</span></div><div class="mail-card-subject">'+escapeHtml(m.subject||'(件名なし)')+'</div><div class="mail-card-body">'+escapeHtml(m.body||'')+'</div>';
     $('inquiryMessages').appendChild(card);
   });
+}
+
+function splitInquiryMessage(messageId){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  if(!inquiry)return;
+  const messages=inquiryState.messagesByInquiry[inquiry.id]||[];
+  const message=messages.find(function(item){return String(item.id||'')===String(messageId||'')});
+  if(!message)return;
+  const confirmed=window.confirm(
+    'この受信メールから後のメールを、新しい問い合わせとして分離します。\n\n'+
+    '日時: '+formatLongDateTime(message.sentAt)+'\n'+
+    '件名: '+String(message.subject||'(件名なし)')+'\n\n'+
+    '元の問い合わせは残ります。続けますか？'
+  );
+  if(!confirmed)return;
+
+  const buttons=document.querySelectorAll('[data-split-message-id="'+String(messageId).replace(/"/g,'\\"')+'"]');
+  buttons.forEach(function(button){button.disabled=true;button.textContent='分離中...'});
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+      if(result&&Array.isArray(result.sourceMessages))inquiryState.messagesByInquiry[inquiry.id]=result.sourceMessages;
+      if(result&&result.newInquiryId&&Array.isArray(result.newMessages))inquiryState.messagesByInquiry[result.newInquiryId]=result.newMessages;
+      if(result&&result.newInquiryId){
+        selectInquiry(result.newInquiryId);
+        if(typeof setInquiryDetailMode==='function')setInquiryDetailMode('mail');
+      }else{
+        renderInquiryScreen();
+      }
+      window.alert('新しい問い合わせとして分離しました。');
+    })
+    .withFailureHandler(function(error){
+      buttons.forEach(function(button){button.disabled=false;button.textContent='別問い合わせ'});
+      window.alert('問い合わせの分離に失敗しました。 '+(error&&error.message?error.message:String(error)));
+    })
+    .splitInquiryFromMessage({inquiryId:inquiry.id,messageId:messageId});
 }
 
 function saveInquiry(e){
@@ -219,6 +258,7 @@ $('navInquiries').onclick=function(){switchMainView('inquiries')};
 $('navMasters').onclick=function(){switchMainView('masters')};
 $('refreshInquiries').onclick=function(){loadInquiryData(true)};
 $('inquiryRows').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(!row)return;selectInquiry(row.dataset.inquiryId)};
+$('inquiryMessages').onclick=function(e){const button=e.target.closest('[data-split-message-id]');if(!button)return;splitInquiryMessage(button.dataset.splitMessageId)};
 $('inquiryCustomerInput').onchange=function(){fillContactSelect(this.value,'')};
 $('inquiryForm').onsubmit=saveInquiry;
 ['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(id=>$(id).onchange=renderInquiryScreen);
