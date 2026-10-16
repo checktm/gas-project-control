@@ -18,6 +18,16 @@ const MASTER_SETTING_DEFINITIONS = [
     key: 'MAIL_IMPORT_ENABLED',
     defaultValue: 'FALSE',
     description: 'TRUEの場合のみメール自動取込を実行します。'
+  },
+  {
+    key: 'INTERNAL_MAIL_DOMAINS',
+    defaultValue: '',
+    description: '自社送信と判定するメールドメイン。複数ある場合はカンマ区切りで指定します。例: example.co.jp,example.com'
+  },
+  {
+    key: 'INTERNAL_MAIL_ADDRESSES',
+    defaultValue: '',
+    description: '自社送信と判定する個別メールアドレス。共有・特殊アドレスなどをカンマ区切りで指定します。'
   }
 ];
 
