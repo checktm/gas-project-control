@@ -107,6 +107,111 @@ function getInquiryMessages(inquiryId) {
 }
 
 /**
+ * 顧客未特定（UNMATCHED / AMBIGUOUS）の問い合わせだけを、現在の顧客・担当者マスタで再判定する。
+ * 手動設定済みや既に自動確定済みの問い合わせは上書きしない。
+ */
+function reassessUnmatchedInquiries() {
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const inquirySheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries);
+  const inquiries = readSheetObjects_(inquirySheet);
+  const targets = inquiries.filter(function(row) {
+    const status = String(row.customer_match_status || 'UNMATCHED');
+    return status === 'UNMATCHED' || status === 'AMBIGUOUS';
+  });
+
+  if (!targets.length) {
+    return { checked: 0, matched: 0, remaining: 0, data: getInquiryScreenData() };
+  }
+
+  const targetIds = new Set(targets.map(function(row) { return String(row.inquiry_id || ''); }));
+  const senderByInquiry = loadLatestInboundSenderByInquiry_(spreadsheet, targetIds);
+  const customerData = loadCustomerMatchData_(spreadsheet);
+  let matched = 0;
+  let remaining = 0;
+
+  targets.forEach(function(inquiry) {
+    const inquiryId = String(inquiry.inquiry_id || '');
+    const fromEmail = senderByInquiry[inquiryId] || '';
+    if (!fromEmail) {
+      remaining += 1;
+      return;
+    }
+
+    const result = matchCustomer_(fromEmail, customerData);
+    const isMatched = result.status === 'EXACT_CONTACT' || result.status === 'DOMAIN_MATCH';
+    writeRowUpdates_(inquirySheet, inquiry._rowIndex, {
+      customer_id: isMatched ? result.customerId : '',
+      contact_id: isMatched ? result.contactId : '',
+      customer_match_status: result.status,
+      updated_at: new Date()
+    });
+
+    if (isMatched) matched += 1;
+    else remaining += 1;
+  });
+
+  return {
+    checked: targets.length,
+    matched: matched,
+    remaining: remaining,
+    data: getInquiryScreenData()
+  };
+}
+
+/**
+ * 再判定ではメール本文を読まず、必要な4列だけを走査する。
+ * 同一問い合わせに複数の受信メールがある場合は最新の送信元を判定に使う。
+ */
+function loadLatestInboundSenderByInquiry_(spreadsheet, targetIds) {
+  const sheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.messages);
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 2 || lastColumn < 1) return {};
+
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  const inquiryIndex = headers.indexOf('inquiry_id');
+  const directionIndex = headers.indexOf('direction');
+  const fromIndex = headers.indexOf('from_email');
+  const sentAtIndex = headers.indexOf('sent_at');
+  if ([inquiryIndex, directionIndex, fromIndex, sentAtIndex].some(function(index) { return index < 0; })) {
+    throw new Error('InquiryMessages に再判定に必要な列がありません。');
+  }
+
+  const rowCount = lastRow - 1;
+  const inquiryIds = sheet.getRange(2, inquiryIndex + 1, rowCount, 1).getValues();
+  const directions = sheet.getRange(2, directionIndex + 1, rowCount, 1).getValues();
+  const fromEmails = sheet.getRange(2, fromIndex + 1, rowCount, 1).getValues();
+  const sentAts = sheet.getRange(2, sentAtIndex + 1, rowCount, 1).getValues();
+  const result = {};
+
+  for (let i = 0; i < rowCount; i += 1) {
+    const inquiryId = String(inquiryIds[i][0] || '');
+    if (!targetIds.has(inquiryId)) continue;
+    if (String(directions[i][0] || 'INBOUND').toUpperCase() !== 'INBOUND') continue;
+    const fromEmail = normalizeEmail_(fromEmails[i][0]);
+    if (!fromEmail) continue;
+    const time = toInquiryTime_(sentAts[i][0]);
+    if (!result[inquiryId] || time >= result[inquiryId].time) {
+      result[inquiryId] = { email: fromEmail, time: time };
+    }
+  }
+
+  const senderByInquiry = {};
+  Object.keys(result).forEach(function(inquiryId) {
+    senderByInquiry[inquiryId] = result[inquiryId].email;
+  });
+  return senderByInquiry;
+}
+
+function toInquiryTime_(value) {
+  if (value instanceof Date) return value.getTime();
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+/**
  * 問い合わせの管理項目を更新する。
  * メール本文・Gmail IDなどの受信情報はこのAPIでは変更しない。
  */
