@@ -46,10 +46,11 @@ function renderRecentInquiries(items){
   $('dashboardRecentEmpty').classList.toggle('hidden',items.length>0);
   items.forEach(function(item){
     const row=document.createElement('button');
+    const summary=String(item.summary||'').trim()||'問い合わせ概要未設定';
     row.type='button';
     row.className='dashboard-recent-row';
     row.dataset.inquiryId=item.id;
-    row.innerHTML='<span><strong>'+escapeHtml(item.subject||'(件名なし)')+'</strong><small>'+escapeHtml(item.customerName||'未特定')+' / '+escapeHtml(item.assignedMemberName||'未担当')+'</small></span>'+
+    row.innerHTML='<span><strong>'+escapeHtml(summary)+'</strong><small>'+escapeHtml(item.customerName||'未特定')+' / '+escapeHtml(item.assignedMemberName||'未担当')+' / メール件名: '+escapeHtml(item.subject||'(件名なし)')+'</small></span>'+
       '<span><small>'+escapeHtml(formatShortDateTime(item.lastMessageAt||''))+'</small><span class="status-pill '+inquiryStatusClass(item.status)+'">'+escapeHtml(inquiryStatusLabels[item.status]||item.status)+'</span></span>';
     container.appendChild(row);
   });
