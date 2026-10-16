@@ -1,0 +1,130 @@
+<script>
+(function(){
+  function ensureSummaryDetailFields(){
+    const detailInput=$('inquirySummaryInput');
+    if(!detailInput)return;
+    const detailLabel=detailInput.closest('label');
+    if(!detailLabel)return;
+
+    // 既存の「概要」入力欄はIDを維持したまま業務上の「詳細」として使う。
+    // NavigationScriptのAI要約機能との互換性を保つためIDは変更しない。
+    const firstText=Array.from(detailLabel.childNodes).find(function(node){return node.nodeType===Node.TEXT_NODE});
+    if(firstText)firstText.nodeValue='詳細';
+    detailInput.placeholder='問い合わせの経緯・要点・確認事項などの詳細';
+
+    if(!$('inquiryOverviewInput')){
+      const overviewLabel=document.createElement('label');
+      overviewLabel.className='inquiry-overview-field';
+      overviewLabel.innerHTML='概要<input id="inquiryOverviewInput" type="text" maxlength="200" placeholder="問い合わせを一覧で識別する短い概要">';
+      detailLabel.parentNode.insertBefore(overviewLabel,detailLabel);
+    }
+  }
+
+  function syncSummaryDetailAiLabels(){
+    const status=$('aiSummaryStatus');
+    if(status&&status.textContent.indexOf('概要候補')>=0)status.textContent='Geminiで詳細候補を作成します';
+  }
+
+  function applySummaryDetailToRenderedUi(){
+    ensureSummaryDetailFields();
+    const selected=findInquiry(inquiryState.selectedId);
+    if(selected){
+      if($('inquiryOverviewInput'))$('inquiryOverviewInput').value=selected.summary||selected.subject||'';
+      if($('inquirySummaryInput'))$('inquirySummaryInput').value=selected.detail||'';
+      if($('inquiryDetailSubject'))$('inquiryDetailSubject').textContent=selected.summary||selected.subject||'問い合わせ概要未設定';
+      if($('inquiryDetailMeta')){
+        const parts=[];
+        if(selected.receivedAt)parts.push('初回受信 '+formatLongDateTime(selected.receivedAt));
+        if(selected.contactEmail)parts.push(selected.contactEmail);
+        if(selected.subject)parts.push('メール件名: '+selected.subject);
+        $('inquiryDetailMeta').textContent=parts.join(' / ');
+      }
+    }
+
+    document.querySelectorAll('#inquiryRows [data-inquiry-id]').forEach(function(row){
+      const inquiry=findInquiry(row.dataset.inquiryId);
+      if(!inquiry)return;
+      const cells=row.children;
+      if(cells.length<3)return;
+      const primary=cells[2].querySelector('.inquiry-primary');
+      const secondary=cells[2].querySelector('.inquiry-secondary');
+      if(primary){
+        primary.innerHTML='<span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(inquiry.summary||inquiry.subject||'問い合わせ概要未設定');
+      }
+      if(secondary){
+        secondary.textContent=inquiry.subject?'メール件名: '+inquiry.subject:(inquiry.category||'');
+      }
+    });
+    syncSummaryDetailAiLabels();
+  }
+
+  const baseRenderScreen=window.renderInquiryScreen;
+  window.renderInquiryScreen=function(){
+    baseRenderScreen();
+    applySummaryDetailToRenderedUi();
+  };
+
+  const baseRenderDetail=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    baseRenderDetail();
+    applySummaryDetailToRenderedUi();
+  };
+
+  window.getFilteredInquiries=function(){
+    if(!inquiryState.data)return[];
+    const q=String($('inquirySearch').value||'').trim().toLowerCase();
+    const status=$('inquiryStatusFilter').value;
+    const priority=$('inquiryPriorityFilter').value;
+    const unmatchedOnly=$('unmatchedOnly').checked;
+    return inquiryState.data.inquiries.filter(function(i){
+      const hay=[i.customerName,i.contactName,i.contactEmail,i.subject,i.summary,i.detail,i.category].join(' ').toLowerCase();
+      return(!q||hay.includes(q))&&(status==='all'||i.status===status)&&(priority==='all'||i.priority===priority)&&(!unmatchedOnly||['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus));
+    });
+  };
+
+  function saveInquiryWithSummaryDetail(e){
+    e.preventDefault();
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry)return;
+    $('saveInquiryButton').disabled=true;
+    $('inquiryFormMessage').textContent='保存中...';
+    google.script.run
+      .withSuccessHandler(function(data){
+        $('saveInquiryButton').disabled=false;
+        inquiryState.data=data;
+        $('inquiryFormMessage').textContent='保存しました。';
+        renderInquiryScreen();
+      })
+      .withFailureHandler(function(error){
+        $('saveInquiryButton').disabled=false;
+        $('inquiryFormMessage').textContent='保存に失敗しました。'+(error&&error.message?error.message:String(error));
+      })
+      .updateInquiry({
+        inquiryId:inquiry.id,
+        customerId:$('inquiryCustomerInput').value,
+        contactId:$('inquiryContactInput').value,
+        status:$('inquiryStatusInput').value,
+        priority:$('inquiryPriorityInput').value,
+        assignedMemberId:$('inquiryAssigneeInput').value,
+        category:$('inquiryCategoryInput').value,
+        dueDate:$('inquiryDueDateInput').value,
+        summary:String($('inquiryOverviewInput').value||'').trim()||inquiry.subject||'',
+        detail:$('inquirySummaryInput').value,
+        nextAction:$('inquiryNextActionInput').value
+      });
+  }
+
+  ensureSummaryDetailFields();
+  $('inquiryForm').onsubmit=saveInquiryWithSummaryDetail;
+  ['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(function(id){$(id).onchange=renderInquiryScreen});
+  $('inquirySearch').oninput=renderInquiryScreen;
+
+  const style=document.createElement('style');
+  style.id='inquirySummaryDetailStyles';
+  style.textContent='\
+    .inquiry-overview-field input{font-weight:700}\
+    @media(min-width:761px){#inquiryOverviewInput{height:29px!important;min-height:29px!important}#inquirySummaryInput{min-height:48px!important;max-height:82px!important}}\
+  ';
+  document.head.appendChild(style);
+})();
+</script>
