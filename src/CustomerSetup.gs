@@ -25,6 +25,9 @@ function setupCustomerEnvironment() {
       return;
     }
 
+    if (sheetName === 'Inquiries') {
+      sheet = ensureInquirySummaryDetailSchema_(spreadsheet);
+    }
     validateCustomerSheetHeaders_(sheet, headers);
     existing.push(sheetName);
   });
@@ -56,7 +59,7 @@ function getCustomerSheetDefinitions_() {
       'inquiry_id', 'customer_id', 'contact_id', 'gmail_thread_id', 'subject',
       'status', 'priority', 'assigned_member_id', 'category', 'summary',
       'next_action', 'due_date', 'customer_match_status', 'received_at',
-      'last_message_at', 'updated_at'
+      'last_message_at', 'updated_at', 'detail'
     ],
     InquiryMessages: [
       'message_id', 'inquiry_id', 'gmail_message_id', 'gmail_thread_id', 'direction',
