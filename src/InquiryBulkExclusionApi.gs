@@ -1,6 +1,7 @@
 /**
- * 問い合わせ一覧で選択した未特定問い合わせの送信元ドメインを、まとめて対象外登録する。
- * データ自体は削除せず、INQUIRY_EXCLUDED_DOMAINS へ追加する。
+ * 問い合わせ一覧で選択した未特定問い合わせをまとめて対象外にする。
+ * 選択した問い合わせだけ excluded=TRUE とし、送信元ドメインは今後の新規問い合わせ判定用に
+ * INQUIRY_EXCLUDED_DOMAINS へ追加する。
  */
 function excludeInquiryDomainsBulk(input) {
   input = input || {};
@@ -18,7 +19,8 @@ function excludeInquiryDomainsBulk(input) {
 
   try {
     const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
-    const inquiryRows = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
+    const inquirySheet = ensureInquirySummaryDetailSchema_(spreadsheet);
+    const inquiryRows = readSheetObjects_(inquirySheet);
     const inquiryById = {};
     inquiryRows.forEach(function(row) {
       inquiryById[String(row.inquiry_id || '')] = row;
@@ -50,11 +52,15 @@ function excludeInquiryDomainsBulk(input) {
         return;
       }
 
+      writeRowUpdates_(inquirySheet, inquiry._rowIndex, {
+        excluded: true,
+        updated_at: new Date()
+      });
       if (domains.indexOf(domain) < 0) domains.push(domain);
       excludedInquiryIds.push(inquiryId);
     });
 
-    if (!domains.length) throw new Error('対象外登録できる送信元ドメインがありません。');
+    if (!excludedInquiryIds.length) throw new Error('対象外登録できる問い合わせがありません。');
 
     const settingsSheet = requireSheet_(spreadsheet, 'Settings');
     const settingsRows = readSheetObjects_(settingsSheet);
@@ -73,7 +79,7 @@ function excludeInquiryDomainsBulk(input) {
       settingsSheet.appendRow([
         'INQUIRY_EXCLUDED_DOMAINS',
         mergedValue,
-        '問い合わせ一覧・集計から除外する送信元ドメイン。',
+        '問い合わせ一覧・集計から除外する送信元ドメイン。新規問い合わせの初期対象外判定に利用する。',
         new Date()
       ]);
     }
