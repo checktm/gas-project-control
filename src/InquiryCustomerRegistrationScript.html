@@ -7,171 +7,229 @@
   function domainFromEmail(value){
     const email=String(value||'').trim().toLowerCase();
     const at=email.lastIndexOf('@');
-    if(at<1||at>=email.length-1)return'';
-    return normalizeDomainClient(email.slice(at+1));
+    return at>0&&at<email.length-1?normalizeDomainClient(email.slice(at+1)):'';
   }
 
-  function findCustomerByDomain(domain){
-    if(!domain||!inquiryState.data)return null;
-    return (inquiryState.data.customers||[]).find(function(customer){
-      return normalizeDomainClient(customer.domain)===domain;
-    })||null;
+  function customerForInquiry(inquiry){
+    return (inquiryState.data&&inquiryState.data.customers||[]).find(function(c){return c.id===inquiry.customerId})||null;
   }
 
-  function addCustomerRegistrationButtons(messages){
-    const container=$('inquiryMessages');
-    if(!container)return;
-    const cards=container.querySelectorAll('.mail-card');
-    cards.forEach(function(card,index){
-      const message=messages[index];
-      if(!message||String(message.direction||'INBOUND').toUpperCase()!=='INBOUND')return;
-      const domain=domainFromEmail(message.fromEmail);
-      if(!domain)return;
-      const right=card.querySelector('.mail-card-header-right');
-      if(!right||right.querySelector('[data-register-customer-message-id]'))return;
-      const existing=findCustomerByDomain(domain);
-      if(existing){
-        const badge=document.createElement('span');
-        badge.className='mail-domain-customer-label';
-        badge.textContent='顧客登録済み';
-        badge.title=(existing.name||existing.id||'')+' / '+domain;
-        right.appendChild(badge);
-        return;
-      }
-      const button=document.createElement('button');
-      button.type='button';
-      button.className='mail-customer-register-button';
-      button.dataset.registerCustomerMessageId=message.id;
-      button.textContent='顧客登録';
-      button.title=domain+' を顧客ドメインとして登録';
-      right.appendChild(button);
-    });
+  function inboundEmailsForInquiry(inquiryId){
+    const messages=inquiryState.messagesByInquiry[inquiryId]||[];
+    const seen={};
+    return messages.filter(function(m){return String(m.direction||'INBOUND').toUpperCase()==='INBOUND'})
+      .map(function(m){return String(m.fromEmail||'').trim().toLowerCase()})
+      .filter(function(email){if(!email||seen[email])return false;seen[email]=true;return true});
   }
 
-  const baseRenderInquiryMessages=window.renderInquiryMessages;
-  window.renderInquiryMessages=function(messages){
-    baseRenderInquiryMessages(messages);
-    addCustomerRegistrationButtons(messages||[]);
-  };
-
-  function ensureCustomerRegistrationDialog(){
-    if($('customerRegistrationDialog'))return;
-    const overlay=document.createElement('div');
-    overlay.id='customerRegistrationDialog';
-    overlay.className='customer-registration-overlay hidden';
-    overlay.innerHTML='\
-      <div class="customer-registration-dialog" role="dialog" aria-modal="true" aria-labelledby="customerRegistrationTitle">\
-        <div class="customer-registration-header">\
-          <div><div class="panel-kicker">メール送信元から登録</div><h3 id="customerRegistrationTitle">顧客登録</h3></div>\
-          <button type="button" class="customer-registration-close" aria-label="閉じる">×</button>\
-        </div>\
-        <div class="customer-registration-body">\
-          <label>顧客名 <span class="required">*</span><input id="customerRegistrationName" type="text" maxlength="200" placeholder="株式会社○○"></label>\
-          <label>ドメイン<input id="customerRegistrationDomain" type="text" readonly></label>\
-          <div id="customerRegistrationSender" class="customer-registration-sender"></div>\
-          <div class="setting-help">このドメインを新しい顧客として登録します。現在の問い合わせが顧客未設定の場合は、作成した顧客を自動で設定します。</div>\
-          <div id="customerRegistrationStatus" class="form-message"></div>\
-        </div>\
-        <div class="customer-registration-actions">\
-          <button type="button" class="button subtle" data-customer-register-cancel>キャンセル</button>\
-          <button type="button" id="customerRegistrationSubmit" class="button primary">登録</button>\
-        </div>\
-      </div>';
-    document.body.appendChild(overlay);
-    overlay.querySelector('.customer-registration-close').onclick=closeCustomerRegistrationDialog;
-    overlay.querySelector('[data-customer-register-cancel]').onclick=closeCustomerRegistrationDialog;
-    overlay.onclick=function(e){if(e.target===overlay)closeCustomerRegistrationDialog()};
-    $('customerRegistrationSubmit').onclick=submitCustomerRegistration;
+  function emailMatchesDomain(email,domain){
+    const d=domainFromEmail(email);
+    const base=normalizeDomainClient(domain);
+    return !!d&&!!base&&(d===base||d.endsWith('.'+base));
   }
 
-  let customerRegistrationMessageId='';
+  function ensureClassificationPanel(){
+    if($('inquiryClassificationAssist'))return $('inquiryClassificationAssist');
+    const form=$('inquiryForm');
+    const firstRow=form&&form.querySelector('.form-two-columns');
+    if(!form||!firstRow)return null;
+    const panel=document.createElement('section');
+    panel.id='inquiryClassificationAssist';
+    panel.className='inquiry-classification-assist hidden';
+    firstRow.parentNode.insertBefore(panel,firstRow);
+    return panel;
+  }
 
-  function openCustomerRegistrationDialog(messageId){
+  function renderClassificationPanel(){
+    const panel=ensureClassificationPanel();
+    if(!panel)return;
     const inquiry=findInquiry(inquiryState.selectedId);
-    if(!inquiry)return;
-    const messages=inquiryState.messagesByInquiry[inquiry.id]||[];
-    const message=messages.find(function(item){return String(item.id||'')===String(messageId||'')});
-    if(!message)return;
-    const domain=domainFromEmail(message.fromEmail);
-    if(!domain)return;
-    ensureCustomerRegistrationDialog();
-    customerRegistrationMessageId=message.id;
-    $('customerRegistrationName').value='';
-    $('customerRegistrationDomain').value=domain;
-    $('customerRegistrationSender').textContent='送信元: '+String(message.fromEmail||'');
-    $('customerRegistrationStatus').textContent='';
-    $('customerRegistrationSubmit').disabled=false;
-    $('customerRegistrationSubmit').textContent='登録';
-    $('customerRegistrationDialog').classList.remove('hidden');
-    setTimeout(function(){$('customerRegistrationName').focus()},0);
-  }
+    if(!inquiry){panel.classList.add('hidden');return}
 
-  function closeCustomerRegistrationDialog(){
-    const dialog=$('customerRegistrationDialog');
-    if(dialog)dialog.classList.add('hidden');
-    customerRegistrationMessageId='';
-  }
-
-  function submitCustomerRegistration(){
-    const inquiry=findInquiry(inquiryState.selectedId);
-    if(!inquiry||!customerRegistrationMessageId)return;
-    const name=String($('customerRegistrationName').value||'').trim();
-    if(!name){
-      $('customerRegistrationStatus').textContent='顧客名を入力してください。';
-      $('customerRegistrationName').focus();
+    const emails=inboundEmailsForInquiry(inquiry.id);
+    if(!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiry.id)){
+      panel.classList.remove('hidden');
+      panel.innerHTML='<div class="classification-assist-main"><strong>顧客判定</strong><span>メール履歴を確認中...</span></div>';
       return;
     }
-    const button=$('customerRegistrationSubmit');
-    const status=$('customerRegistrationStatus');
-    button.disabled=true;
-    button.textContent='登録中...';
-    status.textContent='顧客マスタへ登録しています...';
-    google.script.run
-      .withSuccessHandler(function(result){
-        if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
-        if(typeof masterState!=='undefined')masterState.data=null;
-        closeCustomerRegistrationDialog();
-        renderInquiryScreen();
-        if(typeof setInquiryDetailMode==='function')setInquiryDetailMode('mail');
-        if(typeof loadDashboardData==='function')loadDashboardData(true);
-        window.alert('顧客「'+String(result&&result.customerName||name)+'」を登録しました。'+(result&&result.linkedToInquiry?'\n現在の問い合わせにも設定しました。':''));
-      })
-      .withFailureHandler(function(error){
-        button.disabled=false;
-        button.textContent='登録';
-        status.textContent='登録に失敗しました。'+(error&&error.message?error.message:String(error));
-      })
-      .registerCustomerFromInquiryMessage({
-        inquiryId:inquiry.id,
-        messageId:customerRegistrationMessageId,
-        customerName:name
-      });
+
+    if(!inquiry.customerId){
+      const domain=emails.map(domainFromEmail).find(Boolean)||'';
+      panel.classList.remove('hidden');
+      panel.innerHTML='\
+        <div class="classification-assist-main">\
+          <strong>顧客未特定</strong>\
+          <span>'+(domain?'送信元ドメイン: <b>'+escapeHtml(domain)+'</b>':'送信元ドメインを取得できません')+'</span>\
+        </div>\
+        <div class="classification-assist-actions">\
+          <button type="button" class="button subtle" data-register-inquiry-customer '+(!domain?'disabled':'')+'>顧客として登録</button>\
+          <button type="button" class="button subtle danger-action" data-exclude-inquiry-domain '+(!domain?'disabled':'')+'>問い合わせ対象外</button>\
+        </div>';
+      panel.dataset.detectedDomain=domain;
+      return;
+    }
+
+    if(!inquiry.contactId){
+      const customer=customerForInquiry(inquiry);
+      const domain=customer&&customer.domain||'';
+      const candidates=emails.filter(function(email){return emailMatchesDomain(email,domain)});
+      panel.classList.remove('hidden');
+      panel.innerHTML='\
+        <div class="classification-assist-main">\
+          <strong>顧客担当者未登録</strong>\
+          <span>'+(domain?'顧客ドメイン: <b>'+escapeHtml(domain)+'</b>':'顧客マスタのドメインが未設定です')+'</span>\
+        </div>\
+        <div class="classification-assist-actions">\
+          <button type="button" class="button subtle" data-register-inquiry-contact '+(!candidates.length?'disabled':'')+'>履歴から担当者登録</button>\
+        </div>';
+      panel.dataset.contactCandidates=JSON.stringify(candidates);
+      return;
+    }
+
+    panel.classList.add('hidden');
+    panel.innerHTML='';
   }
 
-  const messages=$('inquiryMessages');
-  if(messages){
-    messages.addEventListener('click',function(e){
-      const button=e.target.closest('[data-register-customer-message-id]');
-      if(!button)return;
-      e.preventDefault();
-      e.stopPropagation();
-      openCustomerRegistrationDialog(button.dataset.registerCustomerMessageId);
-    });
+  function ensureDialog(){
+    if($('inquiryClassificationDialog'))return;
+    const overlay=document.createElement('div');
+    overlay.id='inquiryClassificationDialog';
+    overlay.className='classification-dialog-overlay hidden';
+    overlay.innerHTML='\
+      <div class="classification-dialog" role="dialog" aria-modal="true">\
+        <div class="classification-dialog-header"><div><div class="panel-kicker">問い合わせからマスタ登録</div><h3 id="classificationDialogTitle"></h3></div><button type="button" class="classification-dialog-close">×</button></div>\
+        <div id="classificationDialogBody" class="classification-dialog-body"></div>\
+        <div id="classificationDialogStatus" class="form-message classification-dialog-status"></div>\
+        <div class="classification-dialog-actions"><button type="button" class="button subtle" data-classification-cancel>キャンセル</button><button type="button" id="classificationDialogSubmit" class="button primary">登録</button></div>\
+      </div>';
+    document.body.appendChild(overlay);
+    overlay.querySelector('.classification-dialog-close').onclick=closeDialog;
+    overlay.querySelector('[data-classification-cancel]').onclick=closeDialog;
+    overlay.onclick=function(e){if(e.target===overlay)closeDialog()};
   }
+
+  let dialogMode='';
+  function closeDialog(){
+    const dialog=$('inquiryClassificationDialog');
+    if(dialog)dialog.classList.add('hidden');
+    dialogMode='';
+  }
+
+  function openCustomerDialog(domain){
+    ensureDialog();
+    dialogMode='customer';
+    $('classificationDialogTitle').textContent='顧客として登録';
+    $('classificationDialogBody').innerHTML='\
+      <label>顧客名 <span class="required">*</span><input id="classificationCustomerName" type="text" maxlength="200" placeholder="株式会社○○"></label>\
+      <label>ドメイン<input id="classificationDomain" type="text" readonly value="'+escapeAttr(domain)+'"></label>\
+      <div class="setting-help">登録後、この問い合わせにも顧客を設定します。</div>';
+    $('classificationDialogStatus').textContent='';
+    $('classificationDialogSubmit').disabled=false;
+    $('classificationDialogSubmit').textContent='登録';
+    $('classificationDialogSubmit').onclick=submitCustomer;
+    $('inquiryClassificationDialog').classList.remove('hidden');
+    setTimeout(function(){$('classificationCustomerName').focus()},0);
+  }
+
+  function openContactDialog(candidates){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const customer=customerForInquiry(inquiry);
+    ensureDialog();
+    dialogMode='contact';
+    $('classificationDialogTitle').textContent='顧客担当者として登録';
+    $('classificationDialogBody').innerHTML='\
+      <div class="setting-help">顧客「'+escapeHtml(customer&&customer.name||'')+'」のドメインと一致する受信メールだけを候補にしています。</div>\
+      <label>メールアドレス<select id="classificationContactEmail">'+candidates.map(function(email){return '<option value="'+escapeAttr(email)+'">'+escapeHtml(email)+'</option>'}).join('')+'</select></label>\
+      <label>担当者名<input id="classificationContactName" type="text" maxlength="200" placeholder="氏名（未入力でも登録可）"></label>';
+    $('classificationDialogStatus').textContent='';
+    $('classificationDialogSubmit').disabled=false;
+    $('classificationDialogSubmit').textContent='登録';
+    $('classificationDialogSubmit').onclick=submitContact;
+    $('inquiryClassificationDialog').classList.remove('hidden');
+    setTimeout(function(){$('classificationContactName').focus()},0);
+  }
+
+  function submitCustomer(){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const name=String($('classificationCustomerName').value||'').trim();
+    const domain=String($('classificationDomain').value||'').trim();
+    if(!name){$('classificationDialogStatus').textContent='顧客名を入力してください。';return}
+    setDialogBusy('顧客を登録しています...');
+    google.script.run.withSuccessHandler(function(result){
+      finishAction(result&&result.inquiryData,'顧客「'+name+'」を登録し、この問い合わせへ設定しました。');
+    }).withFailureHandler(dialogFailure).registerCustomerFromInquiry({inquiryId:inquiry.id,customerName:name,domain:domain});
+  }
+
+  function submitContact(){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const email=$('classificationContactEmail').value;
+    const name=String($('classificationContactName').value||'').trim();
+    setDialogBusy('顧客担当者を登録しています...');
+    google.script.run.withSuccessHandler(function(result){
+      finishAction(result&&result.inquiryData,'顧客担当者 '+email+' を登録し、この問い合わせへ設定しました。');
+    }).withFailureHandler(dialogFailure).registerContactFromInquiry({inquiryId:inquiry.id,email:email,contactName:name});
+  }
+
+  function excludeCurrentDomain(domain){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry||!domain)return;
+    if(!window.confirm(domain+' を問い合わせ対象外ドメインに登録します。\n\nこのドメインから開始した問い合わせは一覧・ダッシュボードから非表示になります。データ自体は削除されません。続けますか？'))return;
+    google.script.run.withSuccessHandler(function(result){
+      if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+      inquiryState.selectedId=null;
+      if(typeof masterState!=='undefined')masterState.data=null;
+      renderInquiryScreen();
+      if(typeof loadDashboardData==='function')loadDashboardData(true);
+      window.alert(domain+' を問い合わせ対象外に登録しました。');
+    }).withFailureHandler(function(error){window.alert('対象外登録に失敗しました。 '+(error&&error.message?error.message:String(error)))}).excludeDomainFromInquiry({inquiryId:inquiry.id,domain:domain});
+  }
+
+  function setDialogBusy(text){
+    $('classificationDialogSubmit').disabled=true;
+    $('classificationDialogSubmit').textContent='処理中...';
+    $('classificationDialogStatus').textContent=text;
+  }
+
+  function dialogFailure(error){
+    $('classificationDialogSubmit').disabled=false;
+    $('classificationDialogSubmit').textContent='登録';
+    $('classificationDialogStatus').textContent='処理に失敗しました。'+(error&&error.message?error.message:String(error));
+  }
+
+  function finishAction(data,message){
+    if(data)inquiryState.data=data;
+    if(typeof masterState!=='undefined')masterState.data=null;
+    closeDialog();
+    renderInquiryScreen();
+    if(typeof setInquiryDetailMode==='function')setInquiryDetailMode('manage');
+    if(typeof loadDashboardData==='function')loadDashboardData(true);
+    window.alert(message);
+  }
+
+  const baseRenderDetail=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    baseRenderDetail();
+    renderClassificationPanel();
+  };
+
+  document.addEventListener('click',function(e){
+    const customerButton=e.target.closest('[data-register-inquiry-customer]');
+    if(customerButton){e.preventDefault();openCustomerDialog(String($('inquiryClassificationAssist').dataset.detectedDomain||''));return}
+    const excludeButton=e.target.closest('[data-exclude-inquiry-domain]');
+    if(excludeButton){e.preventDefault();excludeCurrentDomain(String($('inquiryClassificationAssist').dataset.detectedDomain||''));return}
+    const contactButton=e.target.closest('[data-register-inquiry-contact]');
+    if(contactButton){
+      e.preventDefault();
+      let candidates=[];
+      try{candidates=JSON.parse($('inquiryClassificationAssist').dataset.contactCandidates||'[]')}catch(_e){}
+      if(candidates.length)openContactDialog(candidates);
+    }
+  });
 
   const style=document.createElement('style');
-  style.id='inquiryCustomerRegistrationStyles';
+  style.id='inquiryClassificationAssistStyles';
   style.textContent='\
-    .mail-customer-register-button{border:1px solid #cbd5e1;background:#fff;color:#334155;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer}\
-    .mail-customer-register-button:hover{background:#f1f5f9}\
-    .mail-domain-customer-label{font-size:9px;color:#64748b;background:#f1f5f9;border-radius:999px;padding:3px 6px;white-space:nowrap}\
-    .customer-registration-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1000}\
-    .customer-registration-overlay.hidden{display:none}\
-    .customer-registration-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}\
-    .customer-registration-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.customer-registration-header h3{margin:2px 0 0;font-size:18px}.customer-registration-close{border:0;background:transparent;font-size:24px;line-height:1;color:#64748b;cursor:pointer}\
-    .customer-registration-body{padding:16px 18px;display:grid;gap:12px}.customer-registration-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.customer-registration-body input{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.customer-registration-body input[readonly]{background:#f8fafc;color:#475569}.customer-registration-sender{font-size:11px;color:#64748b;word-break:break-all}\
-    .customer-registration-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}\
-    @media(max-width:760px){.customer-registration-overlay{padding:0;align-items:stretch}.customer-registration-dialog{width:100%;border-radius:0;display:flex;flex-direction:column}.customer-registration-body{flex:1}.customer-registration-actions{position:sticky;bottom:0;background:#fff}}\
+    .inquiry-classification-assist{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border:1px solid #f2c94c;background:#fffbea;border-radius:8px}.inquiry-classification-assist.hidden{display:none}.classification-assist-main{display:flex;align-items:baseline;gap:8px;min-width:0}.classification-assist-main strong{font-size:11px;color:#92400e;white-space:nowrap}.classification-assist-main span{font-size:10px;color:#785b16;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.classification-assist-actions{display:flex;gap:6px;flex:0 0 auto}.classification-assist-actions .button{padding:5px 8px;font-size:10px}.danger-action{color:#b91c1c!important;border-color:#fecaca!important}.classification-dialog-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1200}.classification-dialog-overlay.hidden{display:none}.classification-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}.classification-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.classification-dialog-header h3{margin:2px 0 0;font-size:18px}.classification-dialog-close{border:0;background:transparent;font-size:24px;color:#64748b;cursor:pointer}.classification-dialog-body{padding:16px 18px;display:grid;gap:12px}.classification-dialog-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.classification-dialog-body input,.classification-dialog-body select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.classification-dialog-body input[readonly]{background:#f8fafc}.classification-dialog-status{padding:0 18px}.classification-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}@media(max-width:760px){.inquiry-classification-assist{align-items:flex-start;flex-direction:column}.classification-assist-main{align-items:flex-start;flex-direction:column;gap:2px}.classification-assist-actions{width:100%}.classification-assist-actions .button{flex:1}.classification-dialog-overlay{padding:0;align-items:stretch}.classification-dialog{width:100%;border-radius:0}}\
   ';
   document.head.appendChild(style);
 })();
