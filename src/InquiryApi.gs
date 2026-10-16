@@ -11,7 +11,8 @@ function getInquiryScreenData() {
   const contacts = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.contacts));
   const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
   const categories = readSheetObjects_(ensureInquiryCategorySheet_(spreadsheet));
-  const inquiries = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
+  const allInquiries = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
+  const inquiries = filterInquiryRowsByExcludedDomains_(spreadsheet, allInquiries);
 
   const customerById = indexBy_(customers, 'customer_id');
   const contactById = indexBy_(contacts, 'contact_id');
