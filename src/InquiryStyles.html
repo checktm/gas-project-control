@@ -21,8 +21,13 @@
   .inquiry-form #inquirySummaryInput,.inquiry-form #inquiryNextActionInput{min-height:58px!important;max-height:92px!important;resize:vertical!important;line-height:1.45!important}
 }
 
-/* メール履歴の方向表示は送信/受信だけにする。アドレスは本文カードからは表示しない。 */
-.mail-card-from{font-size:0!important}
+/* メール履歴は新しいメールを上に表示する。DOM順は維持して返信判定等へ影響させない。 */
+.message-list{flex-direction:column-reverse}
+
+/* メール履歴の方向表示は文字サイズを変えず、バッジで判別しやすくする。 */
+.mail-card-from{font-size:0!important;display:inline-flex;align-items:center;border-radius:999px;padding:2px 7px;line-height:1.35}
+.mail-card.inbound .mail-card-from{background:#f1f5f9;border:1px solid #cbd5e1}
+.mail-card.outbound .mail-card-from{background:#dbeafe;border:1px solid #93c5fd}
 .mail-card.inbound .mail-card-from::before{content:'受信';font-size:11px;font-weight:700;color:#475569}
 .mail-card.outbound .mail-card-from::before{content:'送信';font-size:11px;font-weight:700;color:#1d4ed8}
 
