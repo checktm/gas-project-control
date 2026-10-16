@@ -1,6 +1,6 @@
 /**
- * 問い合わせ一覧の対象外ドメイン設定を読み込む。
- * example.com を指定した場合は example.com とそのサブドメインも対象外とする。
+ * 外部ドメイン設定を読み込む。
+ * この設定は今後新しく作成される問い合わせの初期対象外判定に利用する。
  */
 function loadInquiryExcludedDomains_(spreadsheet) {
   const settings = loadSettings_(spreadsheet);
@@ -20,10 +20,7 @@ function isInquiryExcludedDomain_(emailOrDomain, excludedDomains) {
   });
 }
 
-/**
- * 問い合わせの開始元となった最初の受信メール送信元を取得する。
- * 一覧対象外判定は、後続メールで表示可否が揺れないよう開始元で固定する。
- */
+/** 問い合わせの開始元となった最初の受信メール送信元を取得する。 */
 function loadFirstInboundSenderByInquiry_(spreadsheet, inquiryIds) {
   const targetIds = inquiryIds instanceof Set ? inquiryIds : new Set((inquiryIds || []).map(String));
   if (!targetIds.size) return {};
@@ -52,18 +49,11 @@ function loadFirstInboundSenderByInquiry_(spreadsheet, inquiryIds) {
 }
 
 /**
- * Settings の対象外ドメインに該当する問い合わせを一覧・集計から除外する。
- * データ自体は削除しないため、設定から外せば再表示できる。
+ * 一覧・集計から除外するのは excluded がTRUEの問い合わせだけとする。
+ * ドメイン設定を変更しても既存問い合わせへ遡って一括適用しない。
  */
 function filterInquiryRowsByExcludedDomains_(spreadsheet, inquiries) {
-  const excludedDomains = loadInquiryExcludedDomains_(spreadsheet);
-  if (!excludedDomains.length || !inquiries.length) return inquiries;
-
-  const ids = new Set(inquiries.map(function(row) { return String(row.inquiry_id || ''); }).filter(Boolean));
-  const firstSenderByInquiry = loadFirstInboundSenderByInquiry_(spreadsheet, ids);
-
-  return inquiries.filter(function(row) {
-    const sender = firstSenderByInquiry[String(row.inquiry_id || '')] || '';
-    return !sender || !isInquiryExcludedDomain_(sender, excludedDomains);
+  return (inquiries || []).filter(function(row) {
+    return !isTrue_(row.excluded);
   });
 }
