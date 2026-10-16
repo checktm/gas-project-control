@@ -1,15 +1,12 @@
 /**
- * Inquiriesの「概要」と「詳細」の役割を分離するための軽量マイグレーション。
+ * Inquiriesの「概要」と「詳細」の役割を分離し、問い合わせ単位の対象外フラグを保証する。
  *
- * 旧仕様:
- * - summary = 問い合わせの詳細説明
- *
- * 新仕様:
  * - summary = 一覧・見出し用の短い概要（初期値はメール件名）
  * - detail  = 旧summary相当の詳細説明
+ * - excluded = 問い合わせ一覧・集計から除外する問い合わせ単位フラグ
  *
  * 既存シートにdetail列がない場合だけ、旧summaryをdetailへ退避し、
- * summaryをメール件名で初期化する。以後は空のsummaryだけ件名で補完する。
+ * summaryをメール件名で初期化する。excluded列がない場合は追加し、既存行はFALSEとする。
  */
 function ensureInquirySummaryDetailSchema_(spreadsheet) {
   const sheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries);
@@ -43,7 +40,6 @@ function ensureInquirySummaryDetailSchema_(spreadsheet) {
       }));
     }
   } else if (rowCount > 0) {
-    // 新規取込直後などsummaryが空の場合は、件名を初期値として補完する。
     const summaries = sheet.getRange(2, summaryIndex + 1, rowCount, 1).getValues();
     const subjects = sheet.getRange(2, subjectIndex + 1, rowCount, 1).getValues();
     let changed = false;
@@ -54,6 +50,18 @@ function ensureInquirySummaryDetailSchema_(spreadsheet) {
       }
     });
     if (changed) sheet.getRange(2, summaryIndex + 1, rowCount, 1).setValues(summaries);
+  }
+
+  headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  if (headers.indexOf('excluded') < 0) {
+    sheet.insertColumnAfter(sheet.getLastColumn());
+    const excludedColumn = sheet.getLastColumn();
+    sheet.getRange(1, excludedColumn).setValue('excluded');
+    if (rowCount > 0) {
+      sheet.getRange(2, excludedColumn, rowCount, 1).setValues(Array(rowCount).fill(null).map(function() { return [false]; }));
+    }
   }
 
   return sheet;
