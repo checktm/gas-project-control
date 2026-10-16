@@ -55,7 +55,7 @@
     const emails=inboundEmailsForInquiry(inquiry.id);
     if(!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiry.id)){
       panel.classList.remove('hidden');
-      panel.innerHTML='<span class="classification-assist-status"><strong>顧客判定</strong><span>確認中...</span></span>';
+      panel.innerHTML='<span class="classification-assist-status"><span>顧客判定を確認中...</span></span>';
       return;
     }
 
@@ -64,10 +64,9 @@
       panel.classList.remove('hidden');
       panel.innerHTML='\
         <span class="classification-assist-status">\
-          <strong>顧客未特定</strong>\
-          <span>'+(domain?escapeHtml(domain):'ドメイン不明')+'</span>\
+          <span>送信元: '+(domain?escapeHtml(domain):'ドメイン不明')+'</span>\
         </span>\
-        <button type="button" class="button subtle" data-register-inquiry-customer '+(!domain?'disabled':'')+'>顧客登録</button>';
+        <button type="button" class="button primary classification-register-button" data-register-inquiry-customer '+(!domain?'disabled':'')+'>＋ 顧客登録</button>';
       panel.dataset.detectedDomain=domain;
       return;
     }
@@ -79,10 +78,9 @@
       panel.classList.remove('hidden');
       panel.innerHTML='\
         <span class="classification-assist-status">\
-          <strong>担当者未登録</strong>\
-          <span>'+(domain?escapeHtml(domain):'顧客ドメイン未設定')+'</span>\
+          <span>'+(domain?'顧客ドメイン: '+escapeHtml(domain):'顧客ドメイン未設定')+'</span>\
         </span>\
-        <button type="button" class="button subtle" data-register-inquiry-contact '+(!candidates.length?'disabled':'')+'>担当者登録</button>';
+        <button type="button" class="button primary classification-register-button" data-register-inquiry-contact '+(!candidates.length?'disabled':'')+'>＋ 担当者登録</button>';
       panel.dataset.contactCandidates=JSON.stringify(candidates);
       return;
     }
@@ -214,7 +212,7 @@
   const style=document.createElement('style');
   style.id='inquiryClassificationAssistStyles';
   style.textContent='\
-    .inquiry-classification-assist{margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0;max-width:55%;height:28px}.inquiry-classification-assist.hidden{visibility:hidden;display:flex}.classification-assist-status{display:flex;align-items:baseline;gap:6px;min-width:0;padding:3px 7px;border:1px solid #f2c94c;background:#fffbea;border-radius:7px;white-space:nowrap}.classification-assist-status strong{font-size:10px;color:#92400e}.classification-assist-status span{font-size:9px;color:#785b16;overflow:hidden;text-overflow:ellipsis}.inquiry-classification-assist .button{padding:4px 7px;font-size:10px;white-space:nowrap}.classification-dialog-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1200}.classification-dialog-overlay.hidden{display:none}.classification-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}.classification-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.classification-dialog-header h3{margin:2px 0 0;font-size:18px}.classification-dialog-close{border:0;background:transparent;font-size:24px;color:#64748b;cursor:pointer}.classification-dialog-body{padding:16px 18px;display:grid;gap:12px}.classification-dialog-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.classification-dialog-body input,.classification-dialog-body select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.classification-dialog-body input[readonly]{background:#f8fafc}.classification-dialog-status{padding:0 18px}.classification-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}@media(max-width:760px){.inquiry-classification-assist{max-width:48%;gap:4px}.classification-assist-status span{display:none}.inquiry-classification-assist .button{padding:5px 6px;font-size:9px}.classification-dialog-overlay{padding:0;align-items:stretch}.classification-dialog{width:100%;border-radius:0}}\
+    .inquiry-classification-assist{margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0;max-width:55%;height:28px}.inquiry-classification-assist.hidden{visibility:hidden;display:flex}.classification-assist-status{display:flex;align-items:baseline;gap:6px;min-width:0;padding:3px 7px;border:1px solid #dbe3ee;background:#f8fafc;border-radius:7px;white-space:nowrap}.classification-assist-status span{font-size:9px;color:#475569;overflow:hidden;text-overflow:ellipsis}.inquiry-classification-assist .classification-register-button{padding:5px 10px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 1px 2px rgba(15,23,42,.12)}.classification-dialog-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1200}.classification-dialog-overlay.hidden{display:none}.classification-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}.classification-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.classification-dialog-header h3{margin:2px 0 0;font-size:18px}.classification-dialog-close{border:0;background:transparent;font-size:24px;color:#64748b;cursor:pointer}.classification-dialog-body{padding:16px 18px;display:grid;gap:12px}.classification-dialog-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.classification-dialog-body input,.classification-dialog-body select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.classification-dialog-body input[readonly]{background:#f8fafc}.classification-dialog-status{padding:0 18px}.classification-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}@media(max-width:760px){.inquiry-classification-assist{max-width:48%;gap:4px}.classification-assist-status{display:none}.inquiry-classification-assist .classification-register-button{padding:6px 8px;font-size:9px}.classification-dialog-overlay{padding:0;align-items:stretch}.classification-dialog{width:100%;border-radius:0}}\
   ';
   document.head.appendChild(style);
 })();
