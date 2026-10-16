@@ -1,0 +1,74 @@
+name: Build Customer Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_name:
+        description: Customer package label
+        required: false
+        default: manual
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate customer package source
+        run: |
+          test -f src/Code.gs
+          test -f src/CustomerSetup.gs
+          test -f src/appsscript.json
+          test -f docs/customer-installation.md
+          if ! grep -q '__SPREADSHEET_ID__' src/Code.gs; then
+            echo 'Spreadsheet placeholder is missing from src/Code.gs.'
+            exit 1
+          fi
+          if grep -R --exclude='DeploymentSecrets.gs' -nE '(GAS_REFRESH_TOKEN|GAS_CLIENT_SECRET|PROD_GEMINI_API_KEY)' src; then
+            echo 'Potential deployment secret reference found in customer source.'
+            exit 1
+          fi
+
+      - name: Build package
+        env:
+          RELEASE_NAME: ${{ inputs.release_name }}
+          GITHUB_SHA_FULL: ${{ github.sha }}
+        run: |
+          set -eu
+          SHORT_SHA="${GITHUB_SHA_FULL:0:7}"
+          SAFE_NAME=$(printf '%s' "$RELEASE_NAME" | tr -cs 'A-Za-z0-9._-' '-')
+          PACKAGE="gas-project-control-${SAFE_NAME}-${SHORT_SHA}"
+          mkdir -p "dist/$PACKAGE/src"
+          cp -R src/. "dist/$PACKAGE/src/"
+          cp docs/customer-installation.md "dist/$PACKAGE/INSTALL.md"
+          cat > "dist/$PACKAGE/RELEASE.txt" <<EOF
+          gas-project-control customer package
+          commit: $GITHUB_SHA_FULL
+          release: $RELEASE_NAME
+          generated_at_utc: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+          This package does not perform OAuth deployment to the customer tenant.
+          Follow INSTALL.md and deploy from the customer's Apps Script editor.
+          EOF
+          # 顧客向け配布物にAPIキーを埋め込まない。
+          cat > "dist/$PACKAGE/src/DeploymentSecrets.gs" <<'EOF'
+          const DEPLOYMENT_SECRETS = {
+            // 顧客環境ではAI利用方針確定後に設定する。初期状態では空欄。
+            geminiApiKey: ''
+          };
+          EOF
+          (cd dist && zip -r "$PACKAGE.zip" "$PACKAGE")
+          echo "PACKAGE_NAME=$PACKAGE" >> "$GITHUB_ENV"
+
+      - name: Upload customer package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: dist/${{ env.PACKAGE_NAME }}.zip
+          if-no-files-found: error
+          retention-days: 30
