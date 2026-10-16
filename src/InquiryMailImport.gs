@@ -197,7 +197,7 @@ function loadCustomerMatchData_(spreadsheet) {
 
   return {
     customers: customers.filter(function(row) {
-      const status = String(row.status || '').toUpperCase();
+      const status = String(row.status || '').trim().toUpperCase();
       return !status || status === 'ACTIVE';
     }),
     contacts: contacts.filter(function(row) {
@@ -206,12 +206,20 @@ function loadCustomerMatchData_(spreadsheet) {
   };
 }
 
+/**
+ * 問い合わせ送信元から顧客・担当者を判定する。
+ * 既存データに表示名・@付きドメイン・不可視文字などが混ざっても照合できるよう正規化して比較する。
+ */
 function matchCustomer_(fromEmail, data) {
-  const email = normalizeEmail_(fromEmail);
-  if (!email) return { customerId: '', contactId: '', status: 'UNMATCHED' };
+  const extracted = extractEmailAddress_(fromEmail);
+  const email = extracted || normalizeEmail_(fromEmail);
+  if (!email || email.indexOf('@') < 0) {
+    return { customerId: '', contactId: '', status: 'UNMATCHED' };
+  }
 
   const exactContacts = data.contacts.filter(function(contact) {
-    return normalizeEmail_(contact.email) === email;
+    const contactEmail = extractEmailAddress_(contact.email) || normalizeEmail_(contact.email);
+    return contactEmail === email;
   });
 
   if (exactContacts.length === 1) {
@@ -225,9 +233,9 @@ function matchCustomer_(fromEmail, data) {
     return { customerId: '', contactId: '', status: 'AMBIGUOUS' };
   }
 
-  const domain = email.split('@')[1] || '';
+  const domain = normalizeMatchDomain_(email.split('@').slice(-1)[0]);
   const domainCustomers = data.customers.filter(function(customer) {
-    return String(customer.domain || '').trim().toLowerCase() === domain;
+    return normalizeMatchDomain_(customer.domain) === domain;
   });
 
   if (domainCustomers.length === 1) {
@@ -241,6 +249,16 @@ function matchCustomer_(fromEmail, data) {
     return { customerId: '', contactId: '', status: 'AMBIGUOUS' };
   }
   return { customerId: '', contactId: '', status: 'UNMATCHED' };
+}
+
+function normalizeMatchDomain_(value) {
+  return String(value == null ? '' : value)
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/\.+$/, '');
 }
 
 function createInquiry_(sheet, input) {
