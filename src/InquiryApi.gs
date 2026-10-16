@@ -11,7 +11,7 @@ function getInquiryScreenData() {
   const contacts = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.contacts));
   const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
   const categories = readSheetObjects_(ensureInquiryCategorySheet_(spreadsheet));
-  const inquiries = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries));
+  const inquiries = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
 
   const customerById = indexBy_(customers, 'customer_id');
   const contactById = indexBy_(contacts, 'contact_id');
@@ -113,7 +113,7 @@ function getInquiryMessages(inquiryId) {
  */
 function reassessUnmatchedInquiries() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
-  const inquirySheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries);
+  const inquirySheet = ensureInquirySummaryDetailSchema_(spreadsheet);
   const inquiries = readSheetObjects_(inquirySheet);
   const targets = inquiries.filter(function(row) {
     const status = String(row.customer_match_status || 'UNMATCHED');
@@ -220,7 +220,7 @@ function updateInquiry(input) {
   if (!input || !input.inquiryId) throw new Error('inquiryId is required.');
   input = input || {};
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
-  const inquirySheet = requireSheet_(spreadsheet, INQUIRY_SHEETS.inquiries);
+  const inquirySheet = ensureInquirySummaryDetailSchema_(spreadsheet);
   const rows = readSheetObjects_(inquirySheet);
   const row = rows.find(function(item) { return String(item.inquiry_id || '') === String(input.inquiryId || ''); });
   if (!row) throw new Error('問い合わせが見つかりません。');
@@ -244,6 +244,7 @@ function updateInquiry(input) {
   if (assignedMemberId && !members.some(function(item) { return String(item.member_id || '') === assignedMemberId; })) throw new Error('社内担当者が見つかりません。');
 
   const customerChanged = String(row.customer_id || '') !== customerId || String(row.contact_id || '') !== contactId;
+  const summary = String(input.summary || '').trim() || String(row.subject || '').trim();
   writeRowUpdates_(inquirySheet, row._rowIndex, {
     customer_id: customerId,
     contact_id: contactId,
@@ -251,7 +252,8 @@ function updateInquiry(input) {
     priority: priority || 'MEDIUM',
     assigned_member_id: assignedMemberId,
     category: String(input.category || '').trim(),
-    summary: String(input.summary || '').trim(),
+    summary: summary,
+    detail: String(input.detail || '').trim(),
     next_action: String(input.nextAction || '').trim(),
     due_date: String(input.dueDate || '').trim(),
     customer_match_status: customerChanged ? 'MANUAL' : String(row.customer_match_status || 'UNMATCHED'),
@@ -284,7 +286,8 @@ function serializeInquiry_(row, customer, contact, member) {
     assignedMemberId: String(row.assigned_member_id || ''),
     assignedMemberName: String(member.member_name || ''),
     category: String(row.category || ''),
-    summary: String(row.summary || ''),
+    summary: String(row.summary || row.subject || ''),
+    detail: String(row.detail || ''),
     nextAction: String(row.next_action || ''),
     dueDate: formatDateForClient_(row.due_date, 'yyyy-MM-dd'),
     customerMatchStatus: String(row.customer_match_status || 'UNMATCHED'),
