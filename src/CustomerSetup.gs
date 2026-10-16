@@ -37,7 +37,7 @@ function setupCustomerEnvironment() {
     createdSheets: created,
     existingSheets: existing,
     nextSteps: [
-      'SettingsでINQUIRY_GROUP_ADDRESS等を設定する',
+      'SettingsでINQUIRY_GROUP_ADDRESSとINTERNAL_MAIL_DOMAINS等を設定する',
       '必要な顧客・担当者・社内メンバーを登録する',
       'MAIL_IMPORT_ENABLEDをTRUEにする',
       'installInquiryMailImportTrigger()を1回実行する',
@@ -93,6 +93,8 @@ function ensureCustomerInitialSettings_(spreadsheet) {
     ['MAIL_SEARCH_QUERY', 'to:{GROUP_ADDRESS} newer_than:30d', 'Gmail検索条件。{GROUP_ADDRESS} は受付アドレスへ置換します。'],
     ['MAIL_IMPORT_MAX_THREADS', '50', '1回の取込処理で検索する最大スレッド数。'],
     ['MAIL_IMPORT_ENABLED', 'FALSE', 'TRUEの場合のみメール自動取込を実行します。'],
+    ['INTERNAL_MAIL_DOMAINS', '', '自社送信と判定するメールドメイン。複数ある場合はカンマ区切り。'],
+    ['INTERNAL_MAIL_ADDRESSES', '', '自社送信と判定する個別メールアドレス。複数ある場合はカンマ区切り。'],
     ['GEMINI_AI_ENABLED', 'FALSE', '顧客環境ではAPIキー設定完了までFALSEを推奨します。'],
     ['GEMINI_MAX_INPUT_CHARS', '30000', 'AI要約へ渡す最大入力文字数。']
   ];
