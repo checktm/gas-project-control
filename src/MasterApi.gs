@@ -2,12 +2,12 @@ const MASTER_SETTING_DEFINITIONS = [
   {
     key: 'INQUIRY_GROUP_ADDRESS',
     defaultValue: '',
-    description: '問い合わせ受付用Googleグループのメールアドレス。'
+    description: '問い合わせ受付アドレス。複数ある場合はカンマ、改行、セミコロン区切りで指定します。'
   },
   {
     key: 'MAIL_SEARCH_QUERY',
     defaultValue: 'to:{GROUP_ADDRESS} newer_than:30d',
-    description: 'Gmail検索条件。{GROUP_ADDRESS} は受付アドレスへ置換します。'
+    description: 'Gmail検索条件。複数の受付アドレスがある場合、to:{GROUP_ADDRESS} は各受付アドレスへのOR条件へ展開します。'
   },
   {
     key: 'MAIL_IMPORT_MAX_THREADS',
@@ -22,12 +22,7 @@ const MASTER_SETTING_DEFINITIONS = [
   {
     key: 'INTERNAL_MAIL_DOMAINS',
     defaultValue: '',
-    description: '自社送信と判定するメールドメイン。複数ある場合はカンマ区切りで指定します。例: example.co.jp,example.com'
-  },
-  {
-    key: 'INTERNAL_MAIL_ADDRESSES',
-    defaultValue: '',
-    description: '自社送信と判定する個別メールアドレス。共有・特殊アドレスなどをカンマ区切りで指定します。'
+    description: '自社送信と判定するメールドメイン。複数ある場合はカンマ、改行、セミコロン区切りで指定します。例: example.co.jp,example.com'
   }
 ];
 
@@ -172,6 +167,9 @@ function saveSystemSetting(input) {
     if (!Number.isFinite(n) || n < 1 || n > 500) throw new Error('最大スレッド数は1〜500で指定してください。');
     value = String(Math.floor(n));
   }
+  if (key === 'INQUIRY_GROUP_ADDRESS') value = normalizeEmailListSetting_(value);
+  if (key === 'INTERNAL_MAIL_DOMAINS') value = normalizeDomainListSetting_(value);
+
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const sheet = requireSheet_(spreadsheet, 'Settings');
   const rows = readSheetObjects_(sheet);
@@ -243,6 +241,28 @@ function sortByDisplayOrder_(a, b) {
 }
 function normalizeDomain_(value) {
   return String(value || '').trim().toLowerCase().replace(/^@/, '');
+}
+function normalizeEmailListSetting_(value) {
+  const seen = {};
+  return String(value || '').split(/[\n,;]+/).map(function(item) {
+    return normalizeEmail_(item);
+  }).filter(function(email) {
+    if (!email) return false;
+    if (email.indexOf('@') < 1) throw new Error('問い合わせ受付アドレスに正しいメールアドレスを指定してください: ' + email);
+    if (seen[email]) return false;
+    seen[email] = true;
+    return true;
+  }).join(', ');
+}
+function normalizeDomainListSetting_(value) {
+  const seen = {};
+  return String(value || '').split(/[\n,;]+/).map(function(item) {
+    return normalizeDomain_(item);
+  }).filter(function(domain) {
+    if (!domain || seen[domain]) return false;
+    seen[domain] = true;
+    return true;
+  }).join(', ');
 }
 function toOptionalNumber_(value) {
   if (value === '' || value == null) return '';
