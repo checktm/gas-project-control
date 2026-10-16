@@ -34,6 +34,7 @@ function getDashboardData() {
     .map(function(row) {
       return {
         id: String(row.inquiry_id || ''),
+        summary: String(row.summary || ''),
         subject: String(row.subject || '(件名なし)'),
         customerName: customerMap[String(row.customer_id || '')] || '未特定',
         assignedMemberName: memberMap[String(row.assigned_member_id || '')] || '未担当',
