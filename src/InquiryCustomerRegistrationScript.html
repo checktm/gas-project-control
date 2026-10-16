@@ -28,15 +28,21 @@
     return !!d&&!!base&&(d===base||d.endsWith('.'+base));
   }
 
+  /**
+   * 顧客判定・登録操作はフォーム内へ差し込まず、管理情報/メール対応タブと同じ行の右側へ置く。
+   * 表示有無で管理情報フォーム全体が上下にずれないようにする。
+   */
   function ensureClassificationPanel(){
-    if($('inquiryClassificationAssist'))return $('inquiryClassificationAssist');
-    const form=$('inquiryForm');
-    const firstRow=form&&form.querySelector('.form-two-columns');
-    if(!form||!firstRow)return null;
-    const panel=document.createElement('section');
-    panel.id='inquiryClassificationAssist';
-    panel.className='inquiry-classification-assist hidden';
-    firstRow.parentNode.insertBefore(panel,firstRow);
+    const modeBar=$('inquiryDetailModeBar');
+    if(!modeBar)return null;
+    let panel=$('inquiryClassificationAssist');
+    if(panel&&panel.parentNode!==modeBar)panel.remove();
+    if(!panel){
+      panel=document.createElement('section');
+      panel.id='inquiryClassificationAssist';
+      panel.className='inquiry-classification-assist hidden';
+    }
+    modeBar.appendChild(panel);
     return panel;
   }
 
@@ -44,12 +50,12 @@
     const panel=ensureClassificationPanel();
     if(!panel)return;
     const inquiry=findInquiry(inquiryState.selectedId);
-    if(!inquiry){panel.classList.add('hidden');return}
+    if(!inquiry){panel.classList.add('hidden');panel.innerHTML='';return}
 
     const emails=inboundEmailsForInquiry(inquiry.id);
     if(!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiry.id)){
       panel.classList.remove('hidden');
-      panel.innerHTML='<div class="classification-assist-main"><strong>顧客判定</strong><span>メール履歴を確認中...</span></div>';
+      panel.innerHTML='<span class="classification-assist-status"><strong>顧客判定</strong><span>確認中...</span></span>';
       return;
     }
 
@@ -57,14 +63,11 @@
       const domain=emails.map(domainFromEmail).find(Boolean)||'';
       panel.classList.remove('hidden');
       panel.innerHTML='\
-        <div class="classification-assist-main">\
+        <span class="classification-assist-status">\
           <strong>顧客未特定</strong>\
-          <span>'+(domain?'送信元ドメイン: <b>'+escapeHtml(domain)+'</b>':'送信元ドメインを取得できません')+'</span>\
-        </div>\
-        <div class="classification-assist-actions">\
-          <button type="button" class="button subtle" data-register-inquiry-customer '+(!domain?'disabled':'')+'>顧客として登録</button>\
-          <button type="button" class="button subtle danger-action" data-exclude-inquiry-domain '+(!domain?'disabled':'')+'>問い合わせ対象外</button>\
-        </div>';
+          <span>'+(domain?escapeHtml(domain):'ドメイン不明')+'</span>\
+        </span>\
+        <button type="button" class="button subtle" data-register-inquiry-customer '+(!domain?'disabled':'')+'>顧客登録</button>';
       panel.dataset.detectedDomain=domain;
       return;
     }
@@ -75,13 +78,11 @@
       const candidates=emails.filter(function(email){return emailMatchesDomain(email,domain)});
       panel.classList.remove('hidden');
       panel.innerHTML='\
-        <div class="classification-assist-main">\
-          <strong>顧客担当者未登録</strong>\
-          <span>'+(domain?'顧客ドメイン: <b>'+escapeHtml(domain)+'</b>':'顧客マスタのドメインが未設定です')+'</span>\
-        </div>\
-        <div class="classification-assist-actions">\
-          <button type="button" class="button subtle" data-register-inquiry-contact '+(!candidates.length?'disabled':'')+'>履歴から担当者登録</button>\
-        </div>';
+        <span class="classification-assist-status">\
+          <strong>担当者未登録</strong>\
+          <span>'+(domain?escapeHtml(domain):'顧客ドメイン未設定')+'</span>\
+        </span>\
+        <button type="button" class="button subtle" data-register-inquiry-contact '+(!candidates.length?'disabled':'')+'>担当者登録</button>';
       panel.dataset.contactCandidates=JSON.stringify(candidates);
       return;
     }
@@ -170,20 +171,6 @@
     }).withFailureHandler(dialogFailure).registerContactFromInquiry({inquiryId:inquiry.id,email:email,contactName:name});
   }
 
-  function excludeCurrentDomain(domain){
-    const inquiry=findInquiry(inquiryState.selectedId);
-    if(!inquiry||!domain)return;
-    if(!window.confirm(domain+' を問い合わせ対象外ドメインに登録します。\n\nこのドメインから開始した問い合わせは一覧・ダッシュボードから非表示になります。データ自体は削除されません。続けますか？'))return;
-    google.script.run.withSuccessHandler(function(result){
-      if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
-      inquiryState.selectedId=null;
-      if(typeof masterState!=='undefined')masterState.data=null;
-      renderInquiryScreen();
-      if(typeof loadDashboardData==='function')loadDashboardData(true);
-      window.alert(domain+' を問い合わせ対象外に登録しました。');
-    }).withFailureHandler(function(error){window.alert('対象外登録に失敗しました。 '+(error&&error.message?error.message:String(error)))}).excludeDomainFromInquiry({inquiryId:inquiry.id,domain:domain});
-  }
-
   function setDialogBusy(text){
     $('classificationDialogSubmit').disabled=true;
     $('classificationDialogSubmit').textContent='処理中...';
@@ -215,8 +202,6 @@
   document.addEventListener('click',function(e){
     const customerButton=e.target.closest('[data-register-inquiry-customer]');
     if(customerButton){e.preventDefault();openCustomerDialog(String($('inquiryClassificationAssist').dataset.detectedDomain||''));return}
-    const excludeButton=e.target.closest('[data-exclude-inquiry-domain]');
-    if(excludeButton){e.preventDefault();excludeCurrentDomain(String($('inquiryClassificationAssist').dataset.detectedDomain||''));return}
     const contactButton=e.target.closest('[data-register-inquiry-contact]');
     if(contactButton){
       e.preventDefault();
@@ -229,7 +214,7 @@
   const style=document.createElement('style');
   style.id='inquiryClassificationAssistStyles';
   style.textContent='\
-    .inquiry-classification-assist{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border:1px solid #f2c94c;background:#fffbea;border-radius:8px}.inquiry-classification-assist.hidden{display:none}.classification-assist-main{display:flex;align-items:baseline;gap:8px;min-width:0}.classification-assist-main strong{font-size:11px;color:#92400e;white-space:nowrap}.classification-assist-main span{font-size:10px;color:#785b16;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.classification-assist-actions{display:flex;gap:6px;flex:0 0 auto}.classification-assist-actions .button{padding:5px 8px;font-size:10px}.danger-action{color:#b91c1c!important;border-color:#fecaca!important}.classification-dialog-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1200}.classification-dialog-overlay.hidden{display:none}.classification-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}.classification-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.classification-dialog-header h3{margin:2px 0 0;font-size:18px}.classification-dialog-close{border:0;background:transparent;font-size:24px;color:#64748b;cursor:pointer}.classification-dialog-body{padding:16px 18px;display:grid;gap:12px}.classification-dialog-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.classification-dialog-body input,.classification-dialog-body select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.classification-dialog-body input[readonly]{background:#f8fafc}.classification-dialog-status{padding:0 18px}.classification-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}@media(max-width:760px){.inquiry-classification-assist{align-items:flex-start;flex-direction:column}.classification-assist-main{align-items:flex-start;flex-direction:column;gap:2px}.classification-assist-actions{width:100%}.classification-assist-actions .button{flex:1}.classification-dialog-overlay{padding:0;align-items:stretch}.classification-dialog{width:100%;border-radius:0}}\
+    .inquiry-classification-assist{margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0;max-width:55%;height:28px}.inquiry-classification-assist.hidden{visibility:hidden;display:flex}.classification-assist-status{display:flex;align-items:baseline;gap:6px;min-width:0;padding:3px 7px;border:1px solid #f2c94c;background:#fffbea;border-radius:7px;white-space:nowrap}.classification-assist-status strong{font-size:10px;color:#92400e}.classification-assist-status span{font-size:9px;color:#785b16;overflow:hidden;text-overflow:ellipsis}.inquiry-classification-assist .button{padding:4px 7px;font-size:10px;white-space:nowrap}.classification-dialog-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1200}.classification-dialog-overlay.hidden{display:none}.classification-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}.classification-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.classification-dialog-header h3{margin:2px 0 0;font-size:18px}.classification-dialog-close{border:0;background:transparent;font-size:24px;color:#64748b;cursor:pointer}.classification-dialog-body{padding:16px 18px;display:grid;gap:12px}.classification-dialog-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.classification-dialog-body input,.classification-dialog-body select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.classification-dialog-body input[readonly]{background:#f8fafc}.classification-dialog-status{padding:0 18px}.classification-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}@media(max-width:760px){.inquiry-classification-assist{max-width:48%;gap:4px}.classification-assist-status span{display:none}.inquiry-classification-assist .button{padding:5px 6px;font-size:9px}.classification-dialog-overlay{padding:0;align-items:stretch}.classification-dialog{width:100%;border-radius:0}}\
   ';
   document.head.appendChild(style);
 })();
