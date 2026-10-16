@@ -98,6 +98,7 @@ function fieldCheckbox(id,label,checked){return '<label class="master-checkbox">
 function fieldSelect(id,label,options,value,blank){let html='<label>'+escapeHtml(label)+'<select id="'+id+'">';if(blank)html+='<option value="">'+escapeHtml(blank)+'</option>';options.forEach(function(o){html+='<option value="'+escapeAttr(o[0])+'" '+(String(o[0])===String(value)?'selected':'')+'>'+escapeHtml(o[1])+'</option>'});return html+'</select></label>'}
 function buildSettingField(item){
   if(item.key==='MAIL_IMPORT_ENABLED')return '<label>設定<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><select id="masterSettingValue"><option value="TRUE" '+(item.value==='TRUE'?'selected':'')+'>有効</option><option value="FALSE" '+(item.value!=='TRUE'?'selected':'')+'>無効</option></select></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
+  if(item.key==='INQUIRY_GROUP_ADDRESS'||item.key==='INTERNAL_MAIL_DOMAINS')return '<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><label>'+escapeHtml(settingLabel(item.key))+'<textarea id="masterSettingValue" rows="4" placeholder="'+(item.key==='INQUIRY_GROUP_ADDRESS'?'support@example.co.jp, sales@example.co.jp':'example.co.jp, example.com')+'">'+escapeHtml(item.value||'')+'</textarea></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
   const type=item.key==='MAIL_IMPORT_MAX_THREADS'?'number':'text';
   return '<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><label>'+escapeHtml(settingLabel(item.key))+'<input id="masterSettingValue" type="'+type+'" value="'+escapeAttr(item.value||'')+'"></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
 }
@@ -128,7 +129,7 @@ function saveMaster(e){
 }
 
 function customerNameById(id){const c=(masterState.data&&masterState.data.customers||[]).find(x=>x.id===id);return c?c.name:'顧客未設定'}
-function settingLabel(key){return {INQUIRY_GROUP_ADDRESS:'問い合わせ受付アドレス',MAIL_SEARCH_QUERY:'メール検索条件',MAIL_IMPORT_MAX_THREADS:'1回の最大スレッド数',MAIL_IMPORT_ENABLED:'メール自動取込',INTERNAL_MAIL_DOMAINS:'自社メールドメイン',INTERNAL_MAIL_ADDRESSES:'自社メールアドレス'}[key]||key}
+function settingLabel(key){return {INQUIRY_GROUP_ADDRESS:'問い合わせ受付アドレス（複数可）',MAIL_SEARCH_QUERY:'メール検索条件',MAIL_IMPORT_MAX_THREADS:'1回の最大スレッド数',MAIL_IMPORT_ENABLED:'メール自動取込',INTERNAL_MAIL_DOMAINS:'自社メールドメイン'}[key]||key}
 function maskSettingValue(key,value){if(key==='MAIL_IMPORT_ENABLED')return value==='TRUE'?'有効':'無効';return String(value||'')}
 function escapeAttr(value){return escapeHtml(value).replace(/`/g,'&#96;')}
 
