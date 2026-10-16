@@ -1,0 +1,183 @@
+<script>
+(function(){
+  const selectedForExclusion=new Set();
+
+  function ensureBulkActionButton(){
+    if($('excludeSelectedInquiriesButton'))return $('excludeSelectedInquiriesButton');
+    const toolbar=document.querySelector('#inquiryView .toolbar-right');
+    if(!toolbar)return null;
+    const button=document.createElement('button');
+    button.id='excludeSelectedInquiriesButton';
+    button.type='button';
+    button.className='button subtle inquiry-bulk-exclude-button';
+    button.disabled=true;
+    button.textContent='選択を対象外';
+    button.onclick=excludeSelectedInquiries;
+    toolbar.insertBefore(button,toolbar.firstChild);
+    return button;
+  }
+
+  function eligibleVisibleInquiries(){
+    return getFilteredInquiries().filter(function(inquiry){return !inquiry.customerId});
+  }
+
+  function syncBulkButton(){
+    const button=ensureBulkActionButton();
+    if(!button)return;
+    const count=selectedForExclusion.size;
+    button.disabled=count===0;
+    button.textContent=count?'選択を対象外 ('+count+')':'選択を対象外';
+  }
+
+  function decorateHeader(){
+    const header=document.querySelector('.inquiry-list-header.inquiry-row-grid');
+    if(!header||!header.children.length)return;
+    const cell=header.children[0];
+    if(cell.querySelector('#selectAllExcludeCandidates'))return;
+    const label=document.createElement('label');
+    label.className='inquiry-bulk-select-header';
+    label.innerHTML='<input id="selectAllExcludeCandidates" type="checkbox" aria-label="表示中の顧客未特定問い合わせをすべて選択"><span>受信</span>';
+    cell.textContent='';
+    cell.appendChild(label);
+    $('selectAllExcludeCandidates').onchange=function(e){
+      const checked=e.target.checked;
+      eligibleVisibleInquiries().forEach(function(inquiry){
+        if(checked)selectedForExclusion.add(inquiry.id);
+        else selectedForExclusion.delete(inquiry.id);
+      });
+      renderInquiryScreen();
+    };
+  }
+
+  function decorateRows(){
+    document.querySelectorAll('#inquiryRows [data-inquiry-id]').forEach(function(row){
+      const inquiry=findInquiry(row.dataset.inquiryId);
+      if(!inquiry||inquiry.customerId||!row.children.length)return;
+      const cell=row.children[0];
+      if(cell.querySelector('[data-exclusion-select]'))return;
+      const wrap=document.createElement('label');
+      wrap.className='inquiry-bulk-select';
+      wrap.title='問い合わせ対象外候補として選択';
+      const checkbox=document.createElement('input');
+      checkbox.type='checkbox';
+      checkbox.dataset.exclusionSelect=inquiry.id;
+      checkbox.checked=selectedForExclusion.has(inquiry.id);
+      checkbox.setAttribute('aria-label','対象外候補として選択');
+      wrap.appendChild(checkbox);
+      cell.insertBefore(wrap,cell.firstChild);
+    });
+
+    const eligible=eligibleVisibleInquiries();
+    const all=eligible.length>0&&eligible.every(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+    const some=eligible.some(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+    const selectAll=$('selectAllExcludeCandidates');
+    if(selectAll){
+      selectAll.checked=all;
+      selectAll.indeterminate=!all&&some;
+      selectAll.disabled=eligible.length===0;
+    }
+    syncBulkButton();
+  }
+
+  function removeDetailExcludeAction(){
+    const button=document.querySelector('[data-exclude-inquiry-domain]');
+    if(button)button.remove();
+  }
+
+  function pruneSelection(){
+    if(!inquiryState.data)return;
+    const valid={};
+    inquiryState.data.inquiries.forEach(function(inquiry){
+      if(!inquiry.customerId)valid[inquiry.id]=true;
+    });
+    Array.from(selectedForExclusion).forEach(function(id){
+      if(!valid[id])selectedForExclusion.delete(id);
+    });
+  }
+
+  function applyBulkExclusionUi(){
+    pruneSelection();
+    ensureBulkActionButton();
+    decorateHeader();
+    decorateRows();
+    removeDetailExcludeAction();
+  }
+
+  const baseRenderScreen=window.renderInquiryScreen;
+  window.renderInquiryScreen=function(){
+    baseRenderScreen();
+    applyBulkExclusionUi();
+  };
+
+  const baseRenderDetail=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    baseRenderDetail();
+    removeDetailExcludeAction();
+  };
+
+  const rows=$('inquiryRows');
+  if(rows){
+    rows.addEventListener('click',function(e){
+      const checkbox=e.target.closest('[data-exclusion-select]');
+      if(!checkbox)return;
+      e.stopPropagation();
+      const id=String(checkbox.dataset.exclusionSelect||'');
+      if(checkbox.checked)selectedForExclusion.add(id);
+      else selectedForExclusion.delete(id);
+      syncBulkButton();
+      const eligible=eligibleVisibleInquiries();
+      const selectAll=$('selectAllExcludeCandidates');
+      if(selectAll){
+        const all=eligible.length>0&&eligible.every(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+        const some=eligible.some(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+        selectAll.checked=all;
+        selectAll.indeterminate=!all&&some;
+      }
+    },true);
+  }
+
+  function excludeSelectedInquiries(){
+    const ids=Array.from(selectedForExclusion);
+    if(!ids.length)return;
+    const confirmed=window.confirm(
+      '選択した '+ids.length+' 件の送信元ドメインを、問い合わせ対象外としてまとめて登録します。\n\n'+
+      '対象外はドメイン単位で適用されるため、同じドメインから開始した他の問い合わせも一覧・ダッシュボードから非表示になります。\n'+
+      'データ自体は削除されません。続けますか？'
+    );
+    if(!confirmed)return;
+
+    const button=ensureBulkActionButton();
+    button.disabled=true;
+    button.textContent='対象外登録中...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+        selectedForExclusion.clear();
+        if(!findInquiry(inquiryState.selectedId))inquiryState.selectedId=null;
+        if(typeof masterState!=='undefined')masterState.data=null;
+        renderInquiryScreen();
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+        const domains=result&&Array.isArray(result.domains)?result.domains:[];
+        const skipped=result&&Array.isArray(result.skipped)?result.skipped:[];
+        let message=domains.length+'ドメインを問い合わせ対象外に登録しました。';
+        if(skipped.length)message+='\n'+skipped.length+'件は顧客特定済み等の理由で対象外登録しませんでした。';
+        window.alert(message);
+      })
+      .withFailureHandler(function(error){
+        syncBulkButton();
+        window.alert('対象外登録に失敗しました。 '+(error&&error.message?error.message:String(error)));
+      })
+      .excludeInquiryDomainsBulk({inquiryIds:ids});
+  }
+
+  const style=document.createElement('style');
+  style.id='inquiryBulkExclusionStyles';
+  style.textContent='\
+    .inquiry-bulk-select-header{display:flex;align-items:center;gap:6px;cursor:pointer}.inquiry-bulk-select-header input{margin:0}.inquiry-bulk-select{display:inline-flex;align-items:center;margin-right:6px;vertical-align:middle;cursor:pointer}.inquiry-bulk-select input{margin:0;width:14px;height:14px}.inquiry-row-grid>div:first-child{display:flex;align-items:center}.inquiry-bulk-exclude-button:not(:disabled){color:#b91c1c;border-color:#fecaca;background:#fff7f7}.inquiry-bulk-exclude-button:not(:disabled):hover{background:#fee2e2}@media(max-width:760px){.inquiry-bulk-exclude-button{order:-1}}\
+  ';
+  document.head.appendChild(style);
+
+  applyBulkExclusionUi();
+})();
+</script>
