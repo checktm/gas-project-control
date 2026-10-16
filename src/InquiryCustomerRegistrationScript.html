@@ -1,0 +1,178 @@
+<script>
+(function(){
+  function normalizeDomainClient(value){
+    return String(value||'').trim().toLowerCase().replace(/^@/,'');
+  }
+
+  function domainFromEmail(value){
+    const email=String(value||'').trim().toLowerCase();
+    const at=email.lastIndexOf('@');
+    if(at<1||at>=email.length-1)return'';
+    return normalizeDomainClient(email.slice(at+1));
+  }
+
+  function findCustomerByDomain(domain){
+    if(!domain||!inquiryState.data)return null;
+    return (inquiryState.data.customers||[]).find(function(customer){
+      return normalizeDomainClient(customer.domain)===domain;
+    })||null;
+  }
+
+  function addCustomerRegistrationButtons(messages){
+    const container=$('inquiryMessages');
+    if(!container)return;
+    const cards=container.querySelectorAll('.mail-card');
+    cards.forEach(function(card,index){
+      const message=messages[index];
+      if(!message||String(message.direction||'INBOUND').toUpperCase()!=='INBOUND')return;
+      const domain=domainFromEmail(message.fromEmail);
+      if(!domain)return;
+      const right=card.querySelector('.mail-card-header-right');
+      if(!right||right.querySelector('[data-register-customer-message-id]'))return;
+      const existing=findCustomerByDomain(domain);
+      if(existing){
+        const badge=document.createElement('span');
+        badge.className='mail-domain-customer-label';
+        badge.textContent='顧客登録済み';
+        badge.title=(existing.name||existing.id||'')+' / '+domain;
+        right.appendChild(badge);
+        return;
+      }
+      const button=document.createElement('button');
+      button.type='button';
+      button.className='mail-customer-register-button';
+      button.dataset.registerCustomerMessageId=message.id;
+      button.textContent='顧客登録';
+      button.title=domain+' を顧客ドメインとして登録';
+      right.appendChild(button);
+    });
+  }
+
+  const baseRenderInquiryMessages=window.renderInquiryMessages;
+  window.renderInquiryMessages=function(messages){
+    baseRenderInquiryMessages(messages);
+    addCustomerRegistrationButtons(messages||[]);
+  };
+
+  function ensureCustomerRegistrationDialog(){
+    if($('customerRegistrationDialog'))return;
+    const overlay=document.createElement('div');
+    overlay.id='customerRegistrationDialog';
+    overlay.className='customer-registration-overlay hidden';
+    overlay.innerHTML='\
+      <div class="customer-registration-dialog" role="dialog" aria-modal="true" aria-labelledby="customerRegistrationTitle">\
+        <div class="customer-registration-header">\
+          <div><div class="panel-kicker">メール送信元から登録</div><h3 id="customerRegistrationTitle">顧客登録</h3></div>\
+          <button type="button" class="customer-registration-close" aria-label="閉じる">×</button>\
+        </div>\
+        <div class="customer-registration-body">\
+          <label>顧客名 <span class="required">*</span><input id="customerRegistrationName" type="text" maxlength="200" placeholder="株式会社○○"></label>\
+          <label>ドメイン<input id="customerRegistrationDomain" type="text" readonly></label>\
+          <div id="customerRegistrationSender" class="customer-registration-sender"></div>\
+          <div class="setting-help">このドメインを新しい顧客として登録します。現在の問い合わせが顧客未設定の場合は、作成した顧客を自動で設定します。</div>\
+          <div id="customerRegistrationStatus" class="form-message"></div>\
+        </div>\
+        <div class="customer-registration-actions">\
+          <button type="button" class="button subtle" data-customer-register-cancel>キャンセル</button>\
+          <button type="button" id="customerRegistrationSubmit" class="button primary">登録</button>\
+        </div>\
+      </div>';
+    document.body.appendChild(overlay);
+    overlay.querySelector('.customer-registration-close').onclick=closeCustomerRegistrationDialog;
+    overlay.querySelector('[data-customer-register-cancel]').onclick=closeCustomerRegistrationDialog;
+    overlay.onclick=function(e){if(e.target===overlay)closeCustomerRegistrationDialog()};
+    $('customerRegistrationSubmit').onclick=submitCustomerRegistration;
+  }
+
+  let customerRegistrationMessageId='';
+
+  function openCustomerRegistrationDialog(messageId){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry)return;
+    const messages=inquiryState.messagesByInquiry[inquiry.id]||[];
+    const message=messages.find(function(item){return String(item.id||'')===String(messageId||'')});
+    if(!message)return;
+    const domain=domainFromEmail(message.fromEmail);
+    if(!domain)return;
+    ensureCustomerRegistrationDialog();
+    customerRegistrationMessageId=message.id;
+    $('customerRegistrationName').value='';
+    $('customerRegistrationDomain').value=domain;
+    $('customerRegistrationSender').textContent='送信元: '+String(message.fromEmail||'');
+    $('customerRegistrationStatus').textContent='';
+    $('customerRegistrationSubmit').disabled=false;
+    $('customerRegistrationSubmit').textContent='登録';
+    $('customerRegistrationDialog').classList.remove('hidden');
+    setTimeout(function(){$('customerRegistrationName').focus()},0);
+  }
+
+  function closeCustomerRegistrationDialog(){
+    const dialog=$('customerRegistrationDialog');
+    if(dialog)dialog.classList.add('hidden');
+    customerRegistrationMessageId='';
+  }
+
+  function submitCustomerRegistration(){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry||!customerRegistrationMessageId)return;
+    const name=String($('customerRegistrationName').value||'').trim();
+    if(!name){
+      $('customerRegistrationStatus').textContent='顧客名を入力してください。';
+      $('customerRegistrationName').focus();
+      return;
+    }
+    const button=$('customerRegistrationSubmit');
+    const status=$('customerRegistrationStatus');
+    button.disabled=true;
+    button.textContent='登録中...';
+    status.textContent='顧客マスタへ登録しています...';
+    google.script.run
+      .withSuccessHandler(function(result){
+        if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+        if(typeof masterState!=='undefined')masterState.data=null;
+        closeCustomerRegistrationDialog();
+        renderInquiryScreen();
+        if(typeof setInquiryDetailMode==='function')setInquiryDetailMode('mail');
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+        window.alert('顧客「'+String(result&&result.customerName||name)+'」を登録しました。'+(result&&result.linkedToInquiry?'\n現在の問い合わせにも設定しました。':''));
+      })
+      .withFailureHandler(function(error){
+        button.disabled=false;
+        button.textContent='登録';
+        status.textContent='登録に失敗しました。'+(error&&error.message?error.message:String(error));
+      })
+      .registerCustomerFromInquiryMessage({
+        inquiryId:inquiry.id,
+        messageId:customerRegistrationMessageId,
+        customerName:name
+      });
+  }
+
+  const messages=$('inquiryMessages');
+  if(messages){
+    messages.addEventListener('click',function(e){
+      const button=e.target.closest('[data-register-customer-message-id]');
+      if(!button)return;
+      e.preventDefault();
+      e.stopPropagation();
+      openCustomerRegistrationDialog(button.dataset.registerCustomerMessageId);
+    });
+  }
+
+  const style=document.createElement('style');
+  style.id='inquiryCustomerRegistrationStyles';
+  style.textContent='\
+    .mail-customer-register-button{border:1px solid #cbd5e1;background:#fff;color:#334155;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer}\
+    .mail-customer-register-button:hover{background:#f1f5f9}\
+    .mail-domain-customer-label{font-size:9px;color:#64748b;background:#f1f5f9;border-radius:999px;padding:3px 6px;white-space:nowrap}\
+    .customer-registration-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1000}\
+    .customer-registration-overlay.hidden{display:none}\
+    .customer-registration-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}\
+    .customer-registration-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.customer-registration-header h3{margin:2px 0 0;font-size:18px}.customer-registration-close{border:0;background:transparent;font-size:24px;line-height:1;color:#64748b;cursor:pointer}\
+    .customer-registration-body{padding:16px 18px;display:grid;gap:12px}.customer-registration-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.customer-registration-body input{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.customer-registration-body input[readonly]{background:#f8fafc;color:#475569}.customer-registration-sender{font-size:11px;color:#64748b;word-break:break-all}\
+    .customer-registration-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}\
+    @media(max-width:760px){.customer-registration-overlay{padding:0;align-items:stretch}.customer-registration-dialog{width:100%;border-radius:0;display:flex;flex-direction:column}.customer-registration-body{flex:1}.customer-registration-actions{position:sticky;bottom:0;background:#fff}}\
+  ';
+  document.head.appendChild(style);
+})();
+</script>
