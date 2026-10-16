@@ -7,7 +7,7 @@ const MASTER_SETTING_DEFINITIONS = [
   {
     key: 'MAIL_SEARCH_QUERY',
     defaultValue: 'to:{GROUP_ADDRESS} newer_than:30d',
-    description: 'Gmail検索条件。{GROUP_ADDRESS} は問い合わせ受付アドレスへ置換します。'
+    description: 'Gmail検索条件。{GROUP_ADDRESS} は受付アドレスへ置換します。'
   },
   {
     key: 'MAIL_IMPORT_MAX_THREADS',
@@ -53,13 +53,25 @@ function buildSystemSettingsForScreen_(sheet) {
   return MASTER_SETTING_DEFINITIONS.map(function(definition) {
     const row = rowByKey[definition.key] || {};
     const hasValue = Object.prototype.hasOwnProperty.call(row, 'setting_value') && row.setting_value !== '';
+    const rawValue = hasValue ? row.setting_value : definition.defaultValue;
     return {
       key: definition.key,
-      value: String(hasValue ? row.setting_value : definition.defaultValue),
+      value: normalizeSystemSettingValueForScreen_(definition.key, rawValue),
       description: String(row.description || definition.description),
       updatedAt: formatDateForClient_(row.updated_at, "yyyy-MM-dd'T'HH:mm:ss")
     };
   });
+}
+
+/**
+ * Google Sheetsでは TRUE / FALSE がBooleanとして返る場合があるため、
+ * 画面が期待する文字列形式へ正規化する。
+ */
+function normalizeSystemSettingValueForScreen_(key, value) {
+  if (key === 'MAIL_IMPORT_ENABLED') {
+    return isTrue_(value) ? 'TRUE' : 'FALSE';
+  }
+  return String(value == null ? '' : value);
 }
 
 function saveCustomerMaster(input) {
