@@ -1,14 +1,25 @@
 <script>
 (function(){
   const replyInfoCache={};
+  const replyCcDirty={};
   let replyInfoLoadingId='';
+
+  function getLatestInboundByTime(){
+    const id=String(inquiryState.selectedId||'');
+    if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))return null;
+    return (inquiryState.messagesByInquiry[id]||[]).filter(function(message){
+      return String(message.direction||'INBOUND').toUpperCase()==='INBOUND';
+    }).sort(function(a,b){
+      return new Date(b.sentAt||0).getTime()-new Date(a.sentAt||0).getTime();
+    })[0]||null;
+  }
+  window.getLatestInboundMessageForReply=getLatestInboundByTime;
 
   function ensureMailWorkspace(){
     const modeBar=$('inquiryDetailModeBar');
     const workspace=$('inquiryCommunicationWorkspace');
-    const reply=document.querySelector('#inquiryDetailContent .inquiry-reply-section');
     const messages=document.querySelector('#inquiryDetailContent .message-section');
-    if(!modeBar||!workspace||!reply||!messages)return;
+    if(!modeBar||!workspace||!messages)return;
 
     modeBar.innerHTML='\
       <button type="button" class="inquiry-detail-mode active" data-detail-mode="manage">管理情報</button>\
@@ -18,9 +29,47 @@
     const mailPanel=document.createElement('div');
     mailPanel.className='inquiry-communication-panel inquiry-mail-workspace';
     mailPanel.dataset.communicationPanel='mail';
+    mailPanel.innerHTML='\
+      <div class="mail-workspace-toolbar">\
+        <div><strong>メール履歴</strong><span>履歴を確認し、必要なときだけ返信画面を開きます</span></div>\
+        <button type="button" id="openInquiryReplyDialogButton" class="button primary">返信</button>\
+      </div>';
     workspace.appendChild(mailPanel);
-    mailPanel.appendChild(reply);
     mailPanel.appendChild(messages);
+
+    modeBar.onclick=function(e){
+      const button=e.target.closest('[data-detail-mode]');
+      if(!button)return;
+      setInquiryDetailMode(button.dataset.detailMode);
+    };
+    $('openInquiryReplyDialogButton').onclick=openReplyDialog;
+  }
+
+  function ensureReplyDialog(){
+    if($('inquiryReplyDialog'))return;
+    const reply=document.querySelector('.inquiry-reply-section');
+    if(!reply)return;
+
+    const dialog=document.createElement('div');
+    dialog.id='inquiryReplyDialog';
+    dialog.className='inquiry-reply-dialog hidden';
+    dialog.innerHTML='\
+      <div class="inquiry-reply-dialog-backdrop" data-reply-dialog-close></div>\
+      <section class="inquiry-reply-dialog-card" role="dialog" aria-modal="true" aria-label="問い合わせ返信">\
+        <header class="inquiry-reply-dialog-header">\
+          <div><strong>返信</strong><span>メール履歴を確認しながら返信できます</span></div>\
+          <button type="button" class="reply-dialog-close" data-reply-dialog-close aria-label="閉じる">×</button>\
+        </header>\
+        <div class="inquiry-reply-dialog-body">\
+          <section class="reply-dialog-history">\
+            <div class="reply-dialog-column-title">メール履歴 <span id="replyDialogHistoryCount"></span></div>\
+            <div id="replyDialogHistory" class="message-list"></div>\
+          </section>\
+          <section id="replyDialogEditor" class="reply-dialog-editor"></section>\
+        </div>\
+      </section>';
+    document.body.appendChild(dialog);
+    $('replyDialogEditor').appendChild(reply);
 
     let targetMeta=$('inquiryReplyTargetMeta');
     if(!targetMeta){
@@ -31,78 +80,63 @@
       if(heading)heading.insertAdjacentElement('afterend',targetMeta);
     }
 
-    modeBar.onclick=function(e){
-      const button=e.target.closest('[data-detail-mode]');
-      if(!button)return;
-      setInquiryDetailMode(button.dataset.detailMode);
+    if(!$('inquiryReplyCc')){
+      const ccWrap=document.createElement('label');
+      ccWrap.className='reply-cc-field';
+      ccWrap.innerHTML='<span>CC</span><input id="inquiryReplyCc" type="text" placeholder="複数の場合はカンマ区切り">';
+      targetMeta.insertAdjacentElement('afterend',ccWrap);
+      $('inquiryReplyCc').oninput=function(){
+        const id=String(inquiryState.selectedId||'');
+        if(id)replyCcDirty[id]=true;
+      };
+    }
+
+    if(!$('generateReplyDialogAiButton')){
+      const actions=reply.querySelector('.reply-actions');
+      const ai=document.createElement('button');
+      ai.type='button';
+      ai.id='generateReplyDialogAiButton';
+      ai.className='button subtle';
+      ai.textContent='AI返信案';
+      actions.insertBefore(ai,actions.firstChild);
+      ai.onclick=function(){generateAiReplyCandidate(true)};
+    }
+
+    dialog.onclick=function(e){
+      if(e.target.closest('[data-reply-dialog-close]'))closeReplyDialog();
     };
-
-    $('sendInquiryReplyButton').onclick=sendInquiryReplyFromMailWorkspace;
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape'&&!dialog.classList.contains('hidden'))closeReplyDialog();
+    });
+    $('sendInquiryReplyButton').onclick=sendInquiryReplyFromDialog;
   }
 
-  function ensureAiReplyButton(){
-    const controls=document.querySelector('.ai-summary-controls');
-    if(!controls||$('generateInquiryReplyButton'))return;
-    const button=document.createElement('button');
-    button.type='button';
-    button.id='generateInquiryReplyButton';
-    button.className='button subtle';
-    button.textContent='AI返信案';
-    const status=document.createElement('span');
-    status.id='aiReplyStatus';
-    status.className='ai-reply-status';
-    controls.appendChild(button);
-    controls.appendChild(status);
-    button.onclick=generateInquiryReplyFromManagement;
+  function syncReplyDialogHistory(){
+    const target=$('replyDialogHistory');
+    const source=$('inquiryMessages');
+    if(!target||!source)return;
+    target.innerHTML=source.innerHTML;
+    const id=String(inquiryState.selectedId||'');
+    const messages=id&&inquiryState.messagesByInquiry[id]||[];
+    if($('replyDialogHistoryCount'))$('replyDialogHistoryCount').textContent='('+messages.length+')';
   }
 
-  function selectedLabel(id){
-    const el=$(id);
-    if(!el||el.selectedIndex<0)return'';
-    const option=el.options[el.selectedIndex];
-    return option?String(option.textContent||''):'';
+  function openReplyDialog(){
+    ensureReplyDialog();
+    const dialog=$('inquiryReplyDialog');
+    if(!dialog)return;
+    syncReplyDialogHistory();
+    dialog.classList.remove('hidden');
+    document.body.classList.add('reply-dialog-open');
+    loadReplyInfoForSelectedInquiry(true);
+    updateInquiryReplyUi();
+    setTimeout(function(){if($('inquiryReplyBody'))$('inquiryReplyBody').focus()},0);
   }
 
-  function generateInquiryReplyFromManagement(){
-    const inquiry=findInquiry(inquiryState.selectedId);
-    if(!inquiry)return;
-    const button=$('generateInquiryReplyButton');
-    const status=$('aiReplyStatus');
-    button.disabled=true;
-    button.textContent='作成中...';
-    status.className='ai-reply-status';
-    status.textContent='管理情報とメール履歴から返信案を作成しています...';
-
-    google.script.run
-      .withSuccessHandler(function(result){
-        button.disabled=false;
-        button.textContent='AI返信案';
-        const body=$('inquiryReplyBody');
-        if(body)body.value=result&&result.reply?result.reply:'';
-        status.className='ai-reply-status success';
-        status.textContent='返信案を作成しました。内容を確認して送信してください。';
-        setInquiryDetailMode('mail');
-        updateInquiryReplyUi();
-        if(body)body.focus();
-      })
-      .withFailureHandler(function(error){
-        button.disabled=false;
-        button.textContent='AI返信案';
-        status.className='ai-reply-status error';
-        status.textContent='返信案の作成に失敗しました。'+(error&&error.message?error.message:String(error));
-      })
-      .generateInquiryReplyCandidate({
-        inquiryId:inquiry.id,
-        customerName:selectedLabel('inquiryCustomerInput'),
-        contactName:selectedLabel('inquiryContactInput'),
-        status:selectedLabel('inquiryStatusInput'),
-        priority:selectedLabel('inquiryPriorityInput'),
-        assigneeName:selectedLabel('inquiryAssigneeInput'),
-        category:selectedLabel('inquiryCategoryInput'),
-        dueDate:$('inquiryDueDateInput').value,
-        summary:$('inquirySummaryInput').value,
-        nextAction:$('inquiryNextActionInput').value
-      });
+  function closeReplyDialog(){
+    const dialog=$('inquiryReplyDialog');
+    if(dialog)dialog.classList.add('hidden');
+    document.body.classList.remove('reply-dialog-open');
   }
 
   window.setInquiryDetailMode=function(mode){
@@ -122,9 +156,73 @@
       workspace.classList.remove('hidden');
       const panel=workspace.querySelector('[data-communication-panel="mail"]');
       if(panel)panel.classList.add('active');
-      loadReplyInfoForSelectedInquiry();
+      loadReplyInfoForSelectedInquiry(false);
     }
   };
+
+  function ensureAiReplyButton(){
+    const controls=document.querySelector('.ai-summary-controls');
+    if(!controls||$('generateInquiryReplyButton'))return;
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='generateInquiryReplyButton';
+    button.className='button subtle';
+    button.textContent='AI返信案';
+    const status=document.createElement('span');
+    status.id='aiReplyStatus';
+    status.className='ai-reply-status';
+    controls.appendChild(button);
+    controls.appendChild(status);
+    button.onclick=function(){generateAiReplyCandidate(true)};
+  }
+
+  function selectedLabel(id){
+    const el=$(id);
+    if(!el||el.selectedIndex<0)return'';
+    const option=el.options[el.selectedIndex];
+    return option?String(option.textContent||''):'';
+  }
+
+  function generateAiReplyCandidate(openAfter){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry)return;
+    const managementButton=$('generateInquiryReplyButton');
+    const dialogButton=$('generateReplyDialogAiButton');
+    const status=$('aiReplyStatus');
+    [managementButton,dialogButton].forEach(function(button){if(button){button.disabled=true;button.textContent='作成中...'}});
+    if(status){status.className='ai-reply-status';status.textContent='管理情報とメール履歴から返信案を作成しています...'}
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        [managementButton,dialogButton].forEach(function(button){if(button){button.disabled=false;button.textContent='AI返信案'}});
+        const body=$('inquiryReplyBody');
+        if(body)body.value=result&&result.reply?result.reply:'';
+        if(status){status.className='ai-reply-status success';status.textContent='返信案を作成しました。内容を確認して送信してください。'}
+        if(openAfter)openReplyDialog();
+        updateInquiryReplyUi();
+        if(body)body.focus();
+      })
+      .withFailureHandler(function(error){
+        [managementButton,dialogButton].forEach(function(button){if(button){button.disabled=false;button.textContent='AI返信案'}});
+        if(status){status.className='ai-reply-status error';status.textContent='返信案の作成に失敗しました。'+(error&&error.message?error.message:String(error))}
+        if($('inquiryReplyStatus')){
+          $('inquiryReplyStatus').className='reply-status error';
+          $('inquiryReplyStatus').textContent='AI返信案の作成に失敗しました。';
+        }
+      })
+      .generateInquiryReplyCandidate({
+        inquiryId:inquiry.id,
+        customerName:selectedLabel('inquiryCustomerInput'),
+        contactName:selectedLabel('inquiryContactInput'),
+        status:selectedLabel('inquiryStatusInput'),
+        priority:selectedLabel('inquiryPriorityInput'),
+        assigneeName:selectedLabel('inquiryAssigneeInput'),
+        category:selectedLabel('inquiryCategoryInput'),
+        dueDate:$('inquiryDueDateInput').value,
+        summary:$('inquirySummaryInput').value,
+        nextAction:$('inquiryNextActionInput').value
+      });
+  }
 
   function loadReplyInfoForSelectedInquiry(force){
     const id=String(inquiryState.selectedId||'');
@@ -156,6 +254,7 @@
   function renderReplyInfo(){
     const meta=$('inquiryReplyTargetMeta');
     const recipient=$('inquiryReplyRecipient');
+    const cc=$('inquiryReplyCc');
     const id=String(inquiryState.selectedId||'');
     if(!meta)return;
     if(!id){meta.textContent='';return}
@@ -167,15 +266,16 @@
     const info=replyInfoCache[id];
     if(!info){
       const inquiry=findInquiry(id);
-      const inbound=getLatestInboundMessageForReply();
+      const inbound=getLatestInboundByTime();
       if(!inquiry||!inbound){meta.textContent='返信可能な受信メールがありません';return}
       const fallback=String(inbound.fromEmail||inquiry.contactEmail||'不明');
-      if(recipient)recipient.textContent='宛先: '+fallback;
-      meta.innerHTML='<span><strong>返信先</strong> '+escapeHtml(fallback)+'</span><span><strong>返信対象</strong> '+escapeHtml(inbound.sentAt?formatLongDateTime(inbound.sentAt):'日時不明')+' / '+escapeHtml(inbound.subject||inquiry.subject||'(件名なし)')+'</span>';
+      if(recipient)recipient.textContent='To: '+fallback;
+      meta.innerHTML='<span><strong>返信対象</strong> '+escapeHtml(inbound.sentAt?formatLongDateTime(inbound.sentAt):'日時不明')+' / '+escapeHtml(inbound.subject||inquiry.subject||'(件名なし)')+'</span>';
       return;
     }
-    if(recipient)recipient.textContent='宛先: '+String(info.recipient||'不明');
-    meta.innerHTML='<span><strong>返信先</strong> '+escapeHtml(info.recipient||'不明')+'</span><span><strong>返信対象</strong> '+escapeHtml(info.sentAt?formatLongDateTime(info.sentAt):'日時不明')+' / '+escapeHtml(info.subject||'(件名なし)')+'</span>';
+    if(recipient)recipient.textContent='To: '+String(info.recipient||'不明');
+    meta.innerHTML='<span><strong>返信対象</strong> '+escapeHtml(info.sentAt?formatLongDateTime(info.sentAt):'日時不明')+' / '+escapeHtml(info.subject||'(件名なし)')+'</span>';
+    if(cc&&!replyCcDirty[id])cc.value=Array.isArray(info.cc)?info.cc.join(', '):String(info.cc||'');
   }
 
   const baseUpdateReplyUi=window.updateInquiryReplyUi;
@@ -187,21 +287,23 @@
     const body=$('inquiryReplyBody')?String($('inquiryReplyBody').value||'').trim():'';
     const id=String(inquiryState.selectedId||'');
     const info=id?replyInfoCache[id]:null;
-    const inbound=getLatestInboundMessageForReply();
+    const inbound=getLatestInboundByTime();
     const recipientValue=info&&info.recipient?String(info.recipient):String(inbound&&inbound.fromEmail||inquiry&&inquiry.contactEmail||'');
     if(button)button.disabled=!inquiry||!body||!recipientValue||replyInfoLoadingId===id;
   };
 
-  function sendInquiryReplyFromMailWorkspace(){
+  function sendInquiryReplyFromDialog(){
     const inquiry=findInquiry(inquiryState.selectedId);
-    const inbound=getLatestInboundMessageForReply();
+    const inbound=getLatestInboundByTime();
     if(!inquiry||!inbound)return;
     const body=String($('inquiryReplyBody').value||'').trim();
     if(!body)return;
     const info=replyInfoCache[inquiry.id];
     const recipient=String(info&&info.recipient||inbound.fromEmail||inquiry.contactEmail||'');
+    const cc=String($('inquiryReplyCc')&&$('inquiryReplyCc').value||'').trim();
     const targetText=(info&&info.sentAt?formatLongDateTime(info.sentAt):formatLongDateTime(inbound.sentAt))+' / '+String(info&&info.subject||inbound.subject||inquiry.subject||'(件名なし)');
-    if(!window.confirm('返信先: '+recipient+'\n返信対象: '+targetText+'\n\n送信後は取り消せません。送信しますか？'))return;
+    const ccText=cc?'\nCC: '+cc:'';
+    if(!window.confirm('To: '+recipient+ccText+'\n返信対象: '+targetText+'\n\n送信後は取り消せません。送信しますか？'))return;
 
     const button=$('sendInquiryReplyButton');
     const status=$('inquiryReplyStatus');
@@ -214,12 +316,13 @@
       .withSuccessHandler(function(result){
         button.textContent='返信を送信';
         $('inquiryReplyBody').value='';
+        if($('inquiryReplyCc'))$('inquiryReplyCc').value='';
         delete replyInfoCache[inquiry.id];
+        delete replyCcDirty[inquiry.id];
         if(result&&Array.isArray(result.messages))inquiryState.messagesByInquiry[inquiry.id]=result.messages;
         if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+        closeReplyDialog();
         renderInquiryScreen();
-        status.className='reply-status success';
-        status.textContent='返信を送信しました。';
         setInquiryDetailMode('mail');
         loadReplyInfoForSelectedInquiry(true);
         syncCommunicationMessageCount();
@@ -231,7 +334,7 @@
         status.textContent='送信に失敗しました。'+(error&&error.message?error.message:String(error));
         updateInquiryReplyUi();
       })
-      .sendInquiryReply({inquiryId:inquiry.id,body:body});
+      .sendInquiryReply({inquiryId:inquiry.id,body:body,cc:cc});
   }
 
   function installMailWorkspaceStyles(){
@@ -239,44 +342,52 @@
     const style=document.createElement('style');
     style.id='inquiryMailWorkspaceStyles';
     style.textContent='\
-      .ai-reply-status{font-size:10px;color:#64748b;line-height:1.3}\
-      .ai-reply-status.success{color:#166534}.ai-reply-status.error{color:#b91c1c}\
-      .reply-target-meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 8px;padding:7px 9px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;font-size:10px;color:#475569}\
-      .reply-target-meta strong{color:#334155}\
-      @media(min-width:761px){\
-        .inquiry-mail-workspace{display:flex!important;flex-direction:column;height:100%;min-height:0;overflow:hidden!important}\
-        .inquiry-mail-workspace .inquiry-reply-section{flex:0 0 auto;min-height:0!important;padding:10px 14px!important;border-bottom:1px solid #e2e8f0}\
-        .inquiry-mail-workspace .reply-textarea{min-height:76px!important;max-height:130px!important}\
-        .inquiry-mail-workspace .message-section{flex:1 1 auto;min-height:0!important;overflow-y:auto!important;padding:10px 14px 18px!important}\
-        .inquiry-mail-workspace .message-section>.section-heading{display:flex!important;margin-bottom:8px}\
-      }\
-      @media(max-width:760px){\
-        .inquiry-mail-workspace .inquiry-reply-section{position:sticky;top:94px;z-index:3;background:#fff!important;border-bottom:1px solid #e2e8f0}\
-      }\
+      .ai-reply-status{font-size:10px;color:#64748b;line-height:1.3}.ai-reply-status.success{color:#166534}.ai-reply-status.error{color:#b91c1c}\
+      .mail-workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;border-bottom:1px solid #e2e8f0;background:#fff;flex:0 0 auto}\
+      .mail-workspace-toolbar>div{display:flex;flex-direction:column;gap:2px}.mail-workspace-toolbar strong{font-size:13px}.mail-workspace-toolbar span{font-size:10px;color:#64748b}\
+      .reply-target-meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 8px;padding:7px 9px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;font-size:10px;color:#475569}.reply-target-meta strong{color:#334155}\
+      .reply-cc-field{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;font-size:11px;font-weight:700;color:#475569}.reply-cc-field input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:7px 9px;background:#fff}\
+      .inquiry-reply-dialog{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px}.inquiry-reply-dialog.hidden{display:none}.inquiry-reply-dialog-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.45)}\
+      .inquiry-reply-dialog-card{position:relative;width:min(1180px,94vw);height:min(760px,90vh);background:#fff;border-radius:12px;box-shadow:0 24px 60px rgba(15,23,42,.28);overflow:hidden;display:flex;flex-direction:column}\
+      .inquiry-reply-dialog-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #e2e8f0;background:#fff}.inquiry-reply-dialog-header>div{display:flex;align-items:baseline;gap:10px}.inquiry-reply-dialog-header strong{font-size:16px}.inquiry-reply-dialog-header span{font-size:11px;color:#64748b}.reply-dialog-close{border:0;background:transparent;font-size:26px;line-height:1;color:#64748b;cursor:pointer;padding:2px 6px}\
+      .inquiry-reply-dialog-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr)}.reply-dialog-history{min-width:0;min-height:0;overflow-y:auto;padding:12px 14px;background:#f8fafc;border-right:1px solid #e2e8f0}.reply-dialog-column-title{font-size:12px;font-weight:700;color:#475569;margin-bottom:8px}.reply-dialog-editor{min-width:0;min-height:0;overflow-y:auto;background:#fff}\
+      .reply-dialog-editor .inquiry-reply-section{margin:0!important;padding:14px 16px!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;min-height:100%;box-sizing:border-box}.reply-dialog-editor .reply-textarea{width:100%;min-height:230px;max-height:430px;resize:vertical;box-sizing:border-box}.reply-dialog-editor .reply-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:8px}.reply-dialog-editor .reply-status{margin-right:auto}\
+      body.reply-dialog-open{overflow:hidden}\
+      @media(min-width:761px){.inquiry-mail-workspace{display:flex!important;flex-direction:column;height:100%;min-height:0;overflow:hidden!important}.inquiry-mail-workspace .message-section{flex:1 1 auto;min-height:0!important;overflow-y:auto!important;padding:10px 14px 18px!important}.inquiry-mail-workspace .message-section>.section-heading{display:none!important}}\
+      @media(max-width:760px){.inquiry-reply-dialog{padding:0}.inquiry-reply-dialog-card{width:100vw;height:100vh;border-radius:0}.inquiry-reply-dialog-body{display:flex;flex-direction:column}.reply-dialog-history{flex:1 1 45%;border-right:0;border-bottom:1px solid #e2e8f0}.reply-dialog-editor{flex:1 1 55%}.reply-dialog-editor .reply-textarea{min-height:140px}.inquiry-reply-dialog-header span{display:none}}\
     ';
     document.head.appendChild(style);
   }
+
+  const baseRenderMessages=window.renderInquiryMessages;
+  window.renderInquiryMessages=function(messages){
+    baseRenderMessages(messages);
+    if($('inquiryReplyDialog')&&!$('inquiryReplyDialog').classList.contains('hidden'))syncReplyDialogHistory();
+  };
 
   const previousRender=window.renderInquiryDetail;
   window.renderInquiryDetail=function(){
     previousRender();
     ensureMailWorkspace();
+    ensureReplyDialog();
     ensureAiReplyButton();
     updateInquiryReplyUi();
     syncCommunicationMessageCount();
-    if(inquiryState.selectedId)loadReplyInfoForSelectedInquiry(false);
   };
 
   const previousSelect=window.selectInquiry;
   window.selectInquiry=function(id){
-    const changed=String(inquiryState.selectedId||'')!==String(id||'');
+    const oldId=String(inquiryState.selectedId||'');
+    const changed=oldId!==String(id||'');
+    if(changed)closeReplyDialog();
     previousSelect(id);
+    if(changed&&oldId){delete replyCcDirty[oldId]}
     if(changed&&$('aiReplyStatus'))$('aiReplyStatus').textContent='';
-    if(changed)loadReplyInfoForSelectedInquiry(false);
   };
 
   installMailWorkspaceStyles();
   ensureMailWorkspace();
+  ensureReplyDialog();
   ensureAiReplyButton();
 })();
 </script>
