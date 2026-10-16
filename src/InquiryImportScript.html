@@ -1,0 +1,59 @@
+<script>
+(function(){
+  function ensureManualImportButton(){
+    if($('manualInquiryImportButton'))return $('manualInquiryImportButton');
+    const toolbar=document.querySelector('#inquiryView .toolbar-right');
+    if(!toolbar)return null;
+    const button=document.createElement('button');
+    button.id='manualInquiryImportButton';
+    button.type='button';
+    button.className='button subtle';
+    button.textContent='メール取込';
+    button.title='Gmailから問い合わせメールを今すぐ取り込みます';
+    button.onclick=runManualInquiryImport;
+    toolbar.appendChild(button);
+    return button;
+  }
+
+  function runManualInquiryImport(){
+    const button=ensureManualImportButton();
+    if(!button||button.disabled)return;
+    button.disabled=true;
+    button.textContent='取込中...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        button.disabled=false;
+        button.textContent='メール取込';
+
+        if(result&&result.reason==='LOCKED'){
+          window.alert('別のメール取込処理が実行中です。少し待ってから再度お試しください。');
+          return;
+        }
+
+        inquiryState.messagesByInquiry={};
+        inquiryState.messageLoadingId=null;
+        inquiryState.data=null;
+        loadInquiryData(true);
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+
+        const imported=Number(result&&result.imported||0);
+        const skipped=Number(result&&result.skipped||0);
+        const errors=Number(result&&result.errors||0);
+        let message='メール取込が完了しました。\n新規取込: '+imported+'件';
+        if(skipped)message+='\n取込済み・対象外等: '+skipped+'件';
+        if(errors)message+='\nエラー: '+errors+'件';
+        if(imported===0&&!errors)message+='\n新しく取り込むメールはありませんでした。';
+        window.alert(message);
+      })
+      .withFailureHandler(function(error){
+        button.disabled=false;
+        button.textContent='メール取込';
+        window.alert('メール取込に失敗しました。 '+(error&&error.message?error.message:String(error)));
+      })
+      .importInquiryEmails({force:true});
+  }
+
+  ensureManualImportButton();
+})();
+</script>
