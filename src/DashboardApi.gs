@@ -1,6 +1,6 @@
 function getDashboardData() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
-  const inquiries = readSheetObjects_(requireSheet_(spreadsheet, 'Inquiries'));
+  const inquiries = readSheetObjects_(ensureInquirySummaryDetailSchema_(spreadsheet));
   const customers = readSheetObjects_(requireSheet_(spreadsheet, 'Customers'));
   const contacts = readSheetObjects_(requireSheet_(spreadsheet, 'CustomerContacts'));
   const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
@@ -34,7 +34,7 @@ function getDashboardData() {
     .map(function(row) {
       return {
         id: String(row.inquiry_id || ''),
-        summary: String(row.summary || ''),
+        summary: String(row.summary || row.subject || ''),
         subject: String(row.subject || '(件名なし)'),
         customerName: customerMap[String(row.customer_id || '')] || '未特定',
         assignedMemberName: memberMap[String(row.assigned_member_id || '')] || '未担当',
