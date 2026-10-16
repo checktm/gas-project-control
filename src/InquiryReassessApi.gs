@@ -1,7 +1,7 @@
 /**
  * 既存の問い合わせを現在の顧客・担当者マスタで再判定する。
- * 過去データでは direction が全て INBOUND として保存されている可能性があるため、
- * 保存済み direction は信用せず、from_email / to_email と自社アドレスから受信方向を再判定する。
+ * 過去データでは direction が誤って保存されている可能性があるため、
+ * 保存済み direction は信用せず、現在の自社メール判定ルールで顧客側送信メールを判定する。
  */
 function reassessUnmatchedInquiriesV2() {
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
@@ -17,11 +17,11 @@ function reassessUnmatchedInquiriesV2() {
   }
 
   const settings = loadSettings_(spreadsheet);
-  const groupAddress = normalizeEmail_(settings[INQUIRY_SETTINGS.groupAddress]);
-  const internalAddresses = loadInternalMailAddresses_(groupAddress);
+  const receptionAddresses = getInquiryReceptionAddresses_(settings);
+  const internalIdentity = loadInternalMailIdentity_(spreadsheet, settings, receptionAddresses);
   const customerData = loadCustomerMatchData_(spreadsheet);
   const targetIds = new Set(targets.map(function(row) { return String(row.inquiry_id || ''); }));
-  const senderByInquiry = loadLatestCustomerSenderForReassessment_(spreadsheet, targetIds, internalAddresses);
+  const senderByInquiry = loadLatestCustomerSenderForReassessment_(spreadsheet, targetIds, internalIdentity);
 
   let matched = 0;
   let remaining = 0;
@@ -57,9 +57,9 @@ function reassessUnmatchedInquiriesV2() {
 
 /**
  * 再判定用に、各問い合わせの「最新の顧客側送信メール」を取得する。
- * 過去の direction 値には依存しない。
+ * 自社側の判定はInquiryMailImport.gsと同じisInternalEmail_を利用する。
  */
-function loadLatestCustomerSenderForReassessment_(spreadsheet, targetIds, internalAddresses) {
+function loadLatestCustomerSenderForReassessment_(spreadsheet, targetIds, internalIdentity) {
   const rows = readSheetObjects_(requireSheet_(spreadsheet, INQUIRY_SHEETS.messages));
   const result = {};
 
@@ -70,14 +70,16 @@ function loadLatestCustomerSenderForReassessment_(spreadsheet, targetIds, intern
     const fromEmail = extractEmailAddress_(row.from_email) || normalizeEmail_(row.from_email);
     if (!fromEmail) return;
 
-    // 自社送信は顧客判定に使わない。過去に INBOUND と誤保存された行もここで除外する。
-    if (internalAddresses.has(fromEmail)) return;
+    // 自社送信は顧客判定に使わない。過去にINBOUNDと誤保存された行もここで除外する。
+    if (isInternalEmail_(fromEmail, internalIdentity)) return;
 
     const recipients = extractEmailAddressesForReassessment_([row.to_email].join(','));
-    const targetsInternal = recipients.some(function(email) { return internalAddresses.has(email); });
+    const targetsInternal = recipients.some(function(email) {
+      return isInternalEmail_(email, internalIdentity);
+    });
 
-    // To が取込時に欠けている古いデータもあるため、From が自社でなければ候補には残す。
-    // To が存在する場合は、自社側宛のメールを優先して受信とみなす。
+    // Toが取込時に欠けている古いデータもあるため、Fromが自社でなければ候補には残す。
+    // Toが存在する場合は、自社側宛のメールだけを受信候補とする。
     if (recipients.length && !targetsInternal) return;
 
     const time = toInquiryTime_(row.sent_at);
