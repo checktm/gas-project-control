@@ -40,7 +40,7 @@ function setupCustomerEnvironment() {
     createdSheets: created,
     existingSheets: existing,
     nextSteps: [
-      'Settingsで問い合わせ受付アドレスとINTERNAL_MAIL_DOMAINS等を設定する',
+      'Settingsで問い合わせ受付アドレス、対象外ドメイン、INTERNAL_MAIL_DOMAINS等を設定する',
       '必要な顧客・担当者・社内メンバーを登録する',
       'MAIL_IMPORT_ENABLEDをTRUEにする',
       'installInquiryMailImportTrigger()を1回実行する',
@@ -97,6 +97,7 @@ function ensureCustomerInitialSettings_(spreadsheet) {
     ['MAIL_IMPORT_MAX_THREADS', '50', '1回の取込処理で検索する最大スレッド数。'],
     ['MAIL_IMPORT_ENABLED', 'FALSE', 'TRUEの場合のみメール自動取込を実行します。'],
     ['INTERNAL_MAIL_DOMAINS', '', '自社送信と判定するメールドメイン。複数ある場合はカンマ、改行、セミコロン区切り。'],
+    ['INQUIRY_EXCLUDED_DOMAINS', '', '問い合わせ一覧・ダッシュボードの対象外にする送信元ドメイン。複数指定可。'],
     ['GEMINI_AI_ENABLED', 'FALSE', '顧客環境ではAPIキー設定完了までFALSEを推奨します。'],
     ['GEMINI_MAX_INPUT_CHARS', '30000', 'AI要約へ渡す最大入力文字数。']
   ];
