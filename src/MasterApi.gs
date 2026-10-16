@@ -23,6 +23,11 @@ const MASTER_SETTING_DEFINITIONS = [
     key: 'INTERNAL_MAIL_DOMAINS',
     defaultValue: '',
     description: '自社送信と判定するメールドメイン。複数ある場合はカンマ、改行、セミコロン区切りで指定します。例: example.co.jp,example.com'
+  },
+  {
+    key: 'INQUIRY_EXCLUDED_DOMAINS',
+    defaultValue: '',
+    description: '問い合わせ一覧・ダッシュボードの対象外にする送信元ドメイン。複数指定可。example.com を指定すると、そのサブドメインも対象外になります。'
   }
 ];
 
@@ -168,7 +173,7 @@ function saveSystemSetting(input) {
     value = String(Math.floor(n));
   }
   if (key === 'INQUIRY_GROUP_ADDRESS') value = normalizeEmailListSetting_(value);
-  if (key === 'INTERNAL_MAIL_DOMAINS') value = normalizeDomainListSetting_(value);
+  if (key === 'INTERNAL_MAIL_DOMAINS' || key === 'INQUIRY_EXCLUDED_DOMAINS') value = normalizeDomainListSetting_(value);
 
   const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
   const sheet = requireSheet_(spreadsheet, 'Settings');
