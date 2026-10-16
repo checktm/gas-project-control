@@ -56,10 +56,14 @@ function renderInquiryScreen(){
     row.className='inquiry-row inquiry-row-grid'+(inquiryState.selectedId===inquiry.id?' selected':'');
     row.dataset.inquiryId=inquiry.id;
     const customerName=inquiry.customerName||'未特定';
+    const summary=String(inquiry.summary||'').trim();
+    const summaryText=summary||'問い合わせ概要未設定';
+    const mailSubject=String(inquiry.subject||'(件名なし)');
+    const secondary=[inquiry.category?'分類: '+inquiry.category:'','メール件名: '+mailSubject].filter(Boolean).join(' / ');
     row.innerHTML=
       '<div><div class="inquiry-primary">'+escapeHtml(formatShortDateTime(inquiry.lastMessageAt||inquiry.receivedAt))+'</div></div>'+
       '<div><div class="inquiry-primary '+(!inquiry.customerName?'match-warning':'')+'">'+escapeHtml(customerName)+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.contactName||inquiry.contactEmail||'')+'</div></div>'+
-      '<div><div class="inquiry-primary"><span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(inquiry.subject||'(件名なし)')+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.category||inquiry.summary||'')+'</div></div>'+
+      '<div><div class="inquiry-primary"><span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(summaryText)+'</div><div class="inquiry-secondary">'+escapeHtml(secondary)+'</div></div>'+
       '<div><div class="inquiry-primary">'+escapeHtml(inquiry.assignedMemberName||'未担当')+'</div></div>'+
       '<div><span class="status-pill '+inquiryStatusClass(inquiry.status)+'">'+escapeHtml(inquiryStatusLabels[inquiry.status]||inquiry.status)+'</span></div>'+
       '<div><div class="inquiry-primary">'+escapeHtml(inquiry.dueDate?formatDate(inquiry.dueDate):'—')+'</div></div>';
@@ -119,8 +123,9 @@ function renderInquiryDetail(){
   $('inquiryDetailContent').classList.toggle('hidden',!inquiry);
   if(!inquiry)return;
 
-  $('inquiryDetailSubject').textContent=inquiry.subject||'(件名なし)';
-  $('inquiryDetailMeta').textContent=(inquiry.receivedAt?'初回受信 '+formatLongDateTime(inquiry.receivedAt):'')+(inquiry.contactEmail?' / '+inquiry.contactEmail:'');
+  const summary=String(inquiry.summary||'').trim();
+  $('inquiryDetailSubject').textContent=summary||'問い合わせ概要未設定';
+  $('inquiryDetailMeta').textContent='メール件名: '+String(inquiry.subject||'(件名なし)')+(inquiry.receivedAt?' / 初回受信 '+formatLongDateTime(inquiry.receivedAt):'')+(inquiry.contactEmail?' / '+inquiry.contactEmail:'');
   setMatchBadge(inquiry.customerMatchStatus);
   fillSelect($('inquiryStatusInput'),(inquiryState.data.statusValues||[]).map(v=>({value:v,label:inquiryStatusLabels[v]||v})),inquiry.status,false);
   fillSelect($('inquiryPriorityInput'),(inquiryState.data.priorityValues||[]).map(v=>({value:v,label:inquiryPriorityLabels[v]||v})),inquiry.priority,false);
