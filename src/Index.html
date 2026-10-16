@@ -103,7 +103,7 @@
     <section id="inquiryView" class="screen-view hidden">
       <section class="toolbar inquiry-toolbar">
         <div class="toolbar-group filters">
-          <input id="inquirySearch" class="search-input" type="search" placeholder="顧客名・件名・送信元で検索">
+          <input id="inquirySearch" class="search-input" type="search" placeholder="顧客名・問い合わせ概要・メール件名・送信元で検索">
           <select id="inquiryStatusFilter">
             <option value="all">状態：すべて</option>
             <option value="NEW">新規</option>
@@ -129,7 +129,7 @@
       <main class="inquiry-layout">
         <section class="inquiry-list-pane">
           <div class="inquiry-list-header inquiry-row-grid">
-            <div>受信</div><div>顧客</div><div>件名</div><div>担当</div><div>状態</div><div>期限</div>
+            <div>受信</div><div>顧客</div><div>問い合わせ概要</div><div>担当</div><div>状態</div><div>期限</div>
           </div>
           <div id="inquiryRows" class="inquiry-list-body"></div>
           <div id="inquiryEmpty" class="empty-state hidden">
@@ -168,7 +168,7 @@
                 <label>分類<select id="inquiryCategoryInput"></select></label>
                 <label>対応期限<input id="inquiryDueDateInput" type="date"></label>
               </div>
-              <label>概要<textarea id="inquirySummaryInput" rows="2" placeholder="問い合わせの要点"></textarea></label>
+              <label>問い合わせ概要<textarea id="inquirySummaryInput" rows="2" placeholder="メール件名に依存せず、この問い合わせの内容が分かるように記載"></textarea></label>
               <label>次回対応<textarea id="inquiryNextActionInput" rows="2" placeholder="次に行う対応"></textarea></label>
               <div id="inquiryFormMessage" class="form-message"></div>
               <div class="panel-actions inquiry-actions">
