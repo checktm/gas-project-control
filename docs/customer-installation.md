@@ -106,10 +106,21 @@ Webアプリのマスタ管理、またはSpreadsheetの `Settings` で設定す
 
 | key | 内容 |
 |---|---|
-| INQUIRY_GROUP_ADDRESS | 問い合わせ受付アドレス |
+| INQUIRY_GROUP_ADDRESS | 問い合わせ受付アドレス。複数ある場合はカンマ、改行、セミコロン区切り |
+| INTERNAL_MAIL_DOMAINS | 自社メールドメイン。複数ある場合はカンマ、改行、セミコロン区切り |
 | MAIL_SEARCH_QUERY | Gmail検索条件 |
 | MAIL_IMPORT_MAX_THREADS | 1回の最大検索スレッド数 |
 | MAIL_IMPORT_ENABLED | 自動取込を有効にする場合TRUE |
+
+自社の個別メールアドレスはSettingsへ重複登録しない。有効な `Members.email` と問い合わせ受付アドレスを方向判定へ自動利用する。
+
+`INQUIRY_GROUP_ADDRESS` は既存key名を維持しているが、値は複数登録できる。例:
+
+```text
+support@example.co.jp, sales@example.co.jp
+```
+
+既存の `MAIL_SEARCH_QUERY=to:{GROUP_ADDRESS} newer_than:30d` は複数受付時に各受付アドレスへのOR検索へ自動展開される。
 
 初期化時は誤取込防止のため `MAIL_IMPORT_ENABLED=FALSE` とする。
 
@@ -122,6 +133,8 @@ Apps Scriptエディタで `installInquiryMailImportTrigger()` を1回実行す�
 これにより、実行した顧客Googleアカウント所有の5分間隔トリガーが作成される。
 
 トリガーはCONTOURアカウントではなく顧客アカウントで作成する。
+
+既存メールの受信・送信判定を補正する必要がある場合は、設定と社内メンバー登録後に `reclassifyInquiryMessageDirections()` を一度実行する。
 
 ## 6. Webアプリとしてデプロイ
 
@@ -170,6 +183,8 @@ AI要約を有効化する場合は、APIキーの所有者・利用料・秘密
 - Apps Script実行者がSpreadsheetへアクセスできる
 - Apps Script実行者が対象Gmailを検索できる
 - 問い合わせ受付アドレスがSettingsに設定されている
+- 自社メールドメインがSettingsに設定されている
+- 社内メンバーのメールアドレスがMembersに登録されている
 - `previewInquiryMailCandidates()` で対象メールだけ取得される
 - `MAIL_IMPORT_ENABLED=TRUE` にする前に検索条件を確認した
 - `installInquiryMailImportTrigger()` を顧客アカウントで実行した
