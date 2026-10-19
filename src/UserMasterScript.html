@@ -1,0 +1,98 @@
+<script>
+(function(){
+  const tab=document.getElementById('usersMasterTab');
+  const importButton=document.getElementById('importMembersAsUsersButton');
+
+  // 表示判定は補助。安全性はUserAccess.gs内のADMIN検証に委ねる。
+  google.script.run
+    .withSuccessHandler(function(identity){
+      if(tab)tab.classList.toggle('hidden',!identity||identity.role!=='ADMIN');
+    })
+    .withFailureHandler(function(){if(tab)tab.classList.add('hidden')})
+    .checkWorkspaceIdentity();
+
+  if(!importButton)return;
+  importButton.onclick=function(){
+    importButton.disabled=true;
+    google.script.run.withSuccessHandler(function(result){
+      importButton.disabled=false;
+      const candidates=result&&result.candidates||[];
+      const old=document.getElementById('userImportDialog');
+      if(old)old.remove();
+      const overlay=document.createElement('div');
+      overlay.id='userImportDialog';
+      overlay.className='classification-dialog-overlay';
+      const dialog=document.createElement('section');
+      dialog.className='classification-dialog';
+      dialog.setAttribute('role','dialog');
+      dialog.setAttribute('aria-modal','true');
+      const header=document.createElement('div');
+      header.className='classification-dialog-header';
+      header.innerHTML='<div><h3>社内メンバーからユーザー登録</h3><small>選択した人を「一般ユーザー・有効」で追加します。</small></div>';
+      const cancel=document.createElement('button');
+      cancel.className='button';
+      cancel.type='button';
+      cancel.textContent='閉じる';
+      cancel.onclick=function(){overlay.remove()};
+      header.appendChild(cancel);
+      dialog.appendChild(header);
+      const body=document.createElement('div');
+      body.className='classification-dialog-body';
+      body.style.maxHeight='50vh';
+      body.style.overflowY='auto';
+      if(!candidates.length)body.textContent='取り込み可能なメンバーがいません（登録済み、無効、メール未設定、またはドメイン不一致）。';
+      candidates.forEach(function(m){
+        const label=document.createElement('label');
+        label.style.display='flex';
+        label.style.alignItems='center';
+        label.style.gap='8px';
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        checkbox.value=m.memberId;
+        checkbox.checked=true;
+        checkbox.style.width='auto';
+        label.appendChild(checkbox);
+        const name=document.createElement('span');
+        name.textContent=m.name+' / '+m.email;
+        label.appendChild(name);
+        body.appendChild(label);
+      });
+      dialog.appendChild(body);
+      const actions=document.createElement('div');
+      actions.className='classification-dialog-actions';
+      const submit=document.createElement('button');
+      submit.className='button primary';
+      submit.type='button';
+      submit.textContent='選択したメンバーを登録';
+      submit.disabled=!candidates.length;
+      submit.onclick=function(){
+        const ids=Array.from(body.querySelectorAll('input:checked')).map(function(el){return el.value});
+        if(!ids.length){window.alert('対象を選択してください。');return}
+        if(!window.confirm(ids.length+'名を一般ユーザーとして登録します。よろしいですか？'))return;
+        submit.disabled=true;
+        submit.textContent='登録中...';
+        google.script.run.withSuccessHandler(function(result){
+          overlay.remove();
+          masterState.data=masterState.data||{};
+          masterState.data.users=result.users||[];
+          masterState.selectedId=null;
+          masterState.creating=false;
+          renderMasterScreen();
+          window.alert((result.created||0)+'名を登録しました。');
+        }).withFailureHandler(function(error){
+          submit.disabled=false;
+          submit.textContent='選択したメンバーを登録';
+          window.alert('登録に失敗しました。'+(error&&error.message||error));
+        }).importMembersAsUsers({memberIds:ids});
+      };
+      actions.appendChild(submit);
+      dialog.appendChild(actions);
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+    }).withFailureHandler(function(error){
+      importButton.disabled=false;
+      window.alert('取り込み候補の取得に失敗しました。'+(error&&error.message||error));
+    }).previewMembersForUserImport();
+  };
+})();
+</script>
