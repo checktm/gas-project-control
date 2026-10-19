@@ -5,6 +5,7 @@ const masterMeta={
   contacts:{title:'顧客担当者',description:'顧客担当者とメールアドレスを管理します。メール完全一致による自動判定に利用します。'},
   members:{title:'社内メンバー',description:'問い合わせ担当として選択する社内メンバーを管理します。'},
   categories:{title:'問い合わせ分類',description:'問い合わせに設定する分類を管理します。'},
+  users:{title:'ユーザー',description:'このシステムへのアクセスを許可するWorkspaceユーザーを管理します。'},
   settings:{title:'システム設定',description:'メール取込・問い合わせ表示に関する安全な設定項目を管理します。'}
 };
 
@@ -24,6 +25,9 @@ function renderMasterScreen(){
   $('masterListTitle').textContent=meta.title;
   $('masterListDescription').textContent=meta.description;
   const settingsMode=masterState.type==='settings';
+  const usersMode=masterState.type==='users';
+  const importButton=$('importMembersAsUsersButton');
+  if(importButton)importButton.classList.toggle('hidden',!usersMode);
   $('newMasterButton').classList.toggle('hidden',settingsMode);
   $('showInactiveMasters').closest('label').classList.toggle('hidden',settingsMode);
   document.querySelectorAll('.master-tab').forEach(function(btn){btn.classList.toggle('active',btn.dataset.masterType===masterState.type)});
@@ -60,12 +64,13 @@ function renderMasterRows(){
 function masterItemId(item){return masterState.type==='settings'?item.key:item.id}
 function masterItemActive(item){
   if(masterState.type==='customers')return item.status!=='INACTIVE';
-  if(['contacts','members','categories'].includes(masterState.type))return item.active!==false;
+  if(['contacts','members','categories','users'].includes(masterState.type))return item.active!==false;
   return true;
 }
 function masterRowHtml(item){
   if(masterState.type==='customers')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.domain||'ドメイン未設定')+'</small></span><span class="master-state '+(item.status==='INACTIVE'?'inactive':'')+'">'+(item.status==='INACTIVE'?'無効':'有効')+'</span>';
   if(masterState.type==='contacts')return '<span><strong>'+escapeHtml(item.name||item.email||'(名称なし)')+'</strong><small>'+escapeHtml(customerNameById(item.customerId)+' / '+(item.email||''))+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  if(masterState.type==='users')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.email||'')+' / '+escapeHtml(item.role==='ADMIN'?'管理者':'一般ユーザー')+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
   if(masterState.type==='members')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.email||'')+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
   if(masterState.type==='categories')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>表示順 '+escapeHtml(item.displayOrder===''?'—':item.displayOrder)+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
   return '<span><strong>'+escapeHtml(settingLabel(item.key))+'</strong><small>'+escapeHtml(item.description||'')+'</small></span><span class="setting-value-preview">'+escapeHtml(maskSettingValue(item.key,item.value))+'</span>';
@@ -87,6 +92,7 @@ function buildMasterFields(item){
   if(masterState.type==='customers')return fieldText('masterName','顧客名',item.name,true)+fieldText('masterDomain','メールドメイン',item.domain,false,'example.co.jp')+fieldSelect('masterStatus','状態',[['ACTIVE','有効'],['INACTIVE','無効']],item.status||'ACTIVE')+fieldTextarea('masterNote','備考',item.note);
   if(masterState.type==='contacts')return fieldSelect('masterCustomerId','顧客',(masterState.data.customers||[]).filter(c=>c.status!=='INACTIVE'||c.id===item.customerId).map(c=>[c.id,c.name||c.id]),item.customerId,'顧客を選択')+fieldText('masterName','担当者名',item.name)+fieldText('masterEmail','メールアドレス',item.email,true,'name@example.co.jp','email')+fieldText('masterPhone','電話番号',item.phone)+fieldCheckbox('masterActive','有効',item.active!==false);
   if(masterState.type==='members')return fieldText('masterName','メンバー名',item.name,true)+fieldText('masterEmail','メールアドレス',item.email,false,'name@example.co.jp','email')+fieldNumber('masterDisplayOrder','表示順',item.displayOrder)+fieldCheckbox('masterActive','有効',item.active!==false);
+  if(masterState.type==='users')return fieldText('masterName','ユーザー名',item.name,true)+fieldText('masterEmail','Google Workspaceメールアドレス',item.email,true,'name@example.co.jp','email')+fieldSelect('masterRole','権限',[['USER','一般ユーザー'],['ADMIN','管理者']],item.role||'USER')+fieldSelect('masterMemberId','社内メンバー',(masterState.data.members||[]).map(m=>[m.id,m.name||m.id]),item.memberId,'紐付けなし')+fieldCheckbox('masterActive','有効',item.active!==false);
   if(masterState.type==='categories')return fieldText('masterName','分類名',item.name,true)+fieldNumber('masterDisplayOrder','表示順',item.displayOrder)+fieldCheckbox('masterActive','有効',item.active!==false);
   return buildSettingField(item);
 }
@@ -113,11 +119,16 @@ function saveMaster(e){
   if(masterState.type==='contacts'){method='saveContactMaster';payload={id:current&&current.id,customerId:$('masterCustomerId').value,name:$('masterName').value,email:$('masterEmail').value,phone:$('masterPhone').value,active:$('masterActive').checked}}
   if(masterState.type==='members'){method='saveMemberMaster';payload={id:current&&current.id,name:$('masterName').value,email:$('masterEmail').value,displayOrder:$('masterDisplayOrder').value,active:$('masterActive').checked}}
   if(masterState.type==='categories'){method='saveInquiryCategoryMaster';payload={id:current&&current.id,name:$('masterName').value,displayOrder:$('masterDisplayOrder').value,active:$('masterActive').checked}}
+  if(masterState.type==='users'){method='saveAccessUser';payload={id:current&&current.id,name:$('masterName').value,email:$('masterEmail').value,role:$('masterRole').value,memberId:$('masterMemberId').value,active:$('masterActive').checked}}
   if(masterState.type==='settings'){method='saveSystemSetting';payload={key:$('masterSettingKey').value,value:$('masterSettingValue').value}}
   google.script.run
     .withSuccessHandler(function(result){
       $('saveMasterButton').disabled=false;
-      masterState.data=result&&result.data?result.data:result;
+      if(masterState.type==='users'){
+        masterState.data.users=result.users||[];
+      }else{
+        masterState.data=result&&result.data?result.data:result;
+      }
       if(result&&result.id)masterState.selectedId=result.id;
       masterState.creating=false;
       $('masterFormMessage').textContent='保存しました。';
@@ -139,5 +150,8 @@ $('showInactiveMasters').onchange=renderMasterRows;
 $('newMasterButton').onclick=function(){masterState.creating=true;masterState.selectedId=null;renderMasterScreen()};
 $('masterRows').onclick=function(e){const row=e.target.closest('[data-master-id]');if(!row)return;masterState.creating=false;masterState.selectedId=row.dataset.masterId;renderMasterScreen()};
 $('masterForm').onsubmit=saveMaster;
-document.querySelectorAll('.master-tab').forEach(function(btn){btn.onclick=function(){masterState.type=btn.dataset.masterType;masterState.selectedId=null;masterState.creating=false;$('masterSearch').value='';renderMasterScreen()}});
+document.querySelectorAll('.master-tab').forEach(function(btn){btn.onclick=function(){masterState.type=btn.dataset.masterType;masterState.selectedId=null;masterState.creating=false;$('masterSearch').value='';if(masterState.type==='users'){
+  $('masterRows').innerHTML='<div class="loading-row">読み込み中...</div>';
+  google.script.run.withSuccessHandler(function(users){masterState.data=masterState.data||{};masterState.data.users=users;renderMasterScreen()}).withFailureHandler(function(error){masterState.type='members';renderMasterScreen();window.alert('ユーザー管理を開けません。'+(error&&error.message||error))}).getUsersMasterData();
+}else renderMasterScreen()}});
 </script>
