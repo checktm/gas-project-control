@@ -198,6 +198,7 @@
           <button class="master-tab" data-master-type="members">社内メンバー</button>
           <button class="master-tab" data-master-type="categories">問い合わせ分類</button>
           <button class="master-tab" data-master-type="settings">システム設定</button>
+          <button class="master-tab hidden" id="usersMasterTab" data-master-type="users">ユーザー</button>
         </aside>
 
         <section class="master-list-pane">
@@ -206,7 +207,7 @@
               <div id="masterListTitle" class="master-list-title">顧客</div>
               <div id="masterListDescription" class="master-list-description">問い合わせ送信者を顧客へ紐付けるための会社・組織を管理します。</div>
             </div>
-            <button id="newMasterButton" class="button primary">＋ 新規登録</button>
+            <div class="toolbar-group"><button id="importMembersAsUsersButton" type="button" class="button hidden">社内メンバーから追加</button><button id="newMasterButton" class="button primary">＋ 新規登録</button></div>
           </div>
           <div class="master-search-row">
             <input id="masterSearch" class="search-input" type="search" placeholder="検索">
@@ -257,5 +258,6 @@
   <?!= include('InquiryImportScript'); ?>
   <?!= include('InquiryReassessScript'); ?>
   <?!= include('MobileScript'); ?>
+  <?!= include('UserMasterScript'); ?>
 </body>
 </html>
