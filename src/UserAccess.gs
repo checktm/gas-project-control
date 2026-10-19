@@ -120,3 +120,79 @@ function saveAccessUser(input) {
     lock.releaseLock();
   }
 }
+
+
+/**
+ * 既存MembersからUsersへ登録する候補を返す。顧客担当者は対象に含めない。
+ * 既存Usersは上書きせず、未登録の有効メンバーだけを候補にする。
+ */
+function previewMembersForUserImport() {
+  const admin = requireAccessUser_('ADMIN');
+  const adminDomain = admin.email.split('@')[1];
+  const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+  const existing = readSheetObjects_(ensureUsersSheet_(spreadsheet));
+  const used = {};
+  existing.forEach(function(row) { used[normalizeAccessEmail_(row.email)] = true; });
+  const candidates = [];
+  const skipped = [];
+  const seen = {};
+  readSheetObjects_(requireSheet_(spreadsheet, 'Members')).forEach(function(row) {
+    const id = String(row.member_id || '').trim();
+    const email = normalizeAccessEmail_(row.email);
+    const name = String(row.member_name || '').trim();
+    if (!isTrue_(row.active) || !id || !name || !email || email.split('@')[1] !== adminDomain || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      skipped.push({memberId:id,reason:'無効・メール未設定・ドメイン不一致など'});
+      return;
+    }
+    if (used[email] || seen[email]) {
+      skipped.push({memberId:id,reason:'ユーザー登録済み、またはメール重複'});
+      return;
+    }
+    seen[email] = true;
+    candidates.push({memberId:id,name:name,email:email});
+  });
+  return {candidates:candidates,skipped:skipped};
+}
+
+/** 管理者が画面で確認して選択した社内メンバーのみ、一般ユーザーとして追加。 */
+function importMembersAsUsers(input) {
+  const admin = requireAccessUser_('ADMIN');
+  const adminDomain = admin.email.split('@')[1];
+  const ids = Array.isArray(input && input.memberIds) ? input.memberIds.map(String) : [];
+  const selected = {};
+  ids.forEach(function(id) { if (id) selected[id] = true; });
+  if (!Object.keys(selected).length) throw new Error('登録する社内メンバーを選択してください。');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error('登録処理が競合しました。');
+  try {
+    const spreadsheet = SpreadsheetApp.openById(APP_CONFIG.spreadsheetId);
+    const usersSheet = ensureUsersSheet_(spreadsheet);
+    const users = readSheetObjects_(usersSheet);
+    const existingEmails = {};
+    users.forEach(function(row) { existingEmails[normalizeAccessEmail_(row.email)] = true; });
+    const members = readSheetObjects_(requireSheet_(spreadsheet, 'Members'));
+    const matches = members.filter(function(row) { return selected[String(row.member_id || '')]; });
+    if (matches.length !== Object.keys(selected).length) throw new Error('選択されたメンバーが見つかりません。再読み込みしてください。');
+    const newUsers = [];
+    const seen = {};
+    matches.forEach(function(row) {
+      const email = normalizeAccessEmail_(row.email);
+      const name = String(row.member_name || '').trim();
+      const memberId = String(row.member_id || '');
+      if (!isTrue_(row.active) || !name || !email || email.split('@')[1] !== adminDomain || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('取込不可のメンバーが選択されています: '+memberId);
+      if (existingEmails[email] || seen[email]) throw new Error('ユーザー登録済みまたはメール重複: '+email);
+      seen[email] = true;
+      newUsers.push([createStableId_('USR'),name,email,'USER',true,memberId,new Date()]);
+    });
+    const headers = usersSheet.getRange(1,1,1,usersSheet.getLastColumn()).getValues()[0];
+    const fields = ['user_id','user_name','email','role','active','member_id','updated_at'];
+    newUsers.forEach(function(values) {
+      const data = {};
+      fields.forEach(function(field,i) { data[field] = values[i]; });
+      usersSheet.appendRow(headers.map(function(header) { return Object.prototype.hasOwnProperty.call(data,header)?data[header]:''; }));
+    });
+    return {created:newUsers.length,users:readSheetObjects_(usersSheet).map(function(row) {
+      return {id:String(row.user_id||''),name:String(row.user_name||''),email:normalizeAccessEmail_(row.email),role:String(row.role||''),active:isTrue_(row.active),memberId:String(row.member_id||'')};
+    })};
+  } finally { lock.releaseLock(); }
+}
