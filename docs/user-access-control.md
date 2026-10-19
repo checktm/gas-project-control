@@ -53,3 +53,12 @@
 - Gmail送受信はUSER_DEPLOYINGアカウントを利用すること。送信者はアクセス利用者本人と一致しない場合がある。
 - APP_CONFIG.spreadsheetId等、開発・顧客個別設定は引き続き保護する。
 - スプレッドシートの直接共有者はアプリの権限体系の対象外であり、Google Drive共有権限も別途制御する。
+
+
+## 実装状況（2026-10-19）
+- 第1段階の実装着手: `src/UserAccess.gs` を追加。`checkWorkspaceIdentity()` で利用者本人のメール取得可否とUsers照合結果を確認可能。
+- `src/CustomerSetup.gs` の `getCustomerSheetDefinitions_()` にUsersを追加。顧客環境にはまだ反映しない。
+- `getUsersMasterData()` と `saveAccessUser()` はADMIN要求をサーバーで評価する。現時点でユーザマスタの画面は未実装。
+- **未着手**: doGetの拒否ページ、他の全公開業務APIのガード、ドメイン内へのWebアプリ公開設定変更、ユーザマスタUI、複数アカウントによる動作確認。したがって現時点ではアプリ全体のアクセス制御はまだ効かない。
+- **先に必要な検証**: 顧客と同じドメインに属する別Workspaceアカウントで `Session.getActiveUser().getEmail()` の取得を確認する。空文字の場合は設計再検討。
+- 初期管理者は顧客の権限ある運用担当者がUsersの初回行に `user_id=USR-ADMIN-001`、`user_name`、`email`、`role=ADMIN`、`active=TRUE`、任意の`member_id`を明示的に登録する（具体メールアドレスをコードに埋め込まない）。
