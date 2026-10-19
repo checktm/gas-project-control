@@ -51,6 +51,7 @@ function setupCustomerEnvironment() {
 
 function getCustomerSheetDefinitions_() {
   return {
+    Users: ['user_id', 'user_name', 'email', 'role', 'active', 'member_id', 'updated_at'],
     Members: ['member_id', 'member_name', 'email', 'active', 'display_order', 'updated_at'],
     Settings: ['setting_key', 'setting_value', 'description', 'updated_at'],
     Customers: ['customer_id', 'customer_name', 'domain', 'status', 'note', 'updated_at'],
