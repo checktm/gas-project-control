@@ -3,12 +3,17 @@
   const tab=document.getElementById('usersMasterTab');
   const importButton=document.getElementById('importMembersAsUsersButton');
 
-  // 表示判定は補助。安全性はUserAccess.gs内のADMIN検証に委ねる。
+  // 初期管理者が未登録でもメニュー自体を見せ、原因を分かるようにする。
+  // データ取得・登録はサーバーAPIのADMIN権限検証で必ず制限する。
+  if(tab)tab.classList.remove('hidden');
   google.script.run
     .withSuccessHandler(function(identity){
-      if(tab)tab.classList.toggle('hidden',!identity||identity.role!=='ADMIN');
+      if(!tab)return;
+      tab.title=identity&&identity.role==='ADMIN'?'ユーザマスタを管理できます':
+        !identity||!identity.emailAvailable?'ユーザー識別不可。Workspaceの公開設定を検証してください。':
+        '管理者未登録です。Usersシートに初期ADMINを登録してください。';
     })
-    .withFailureHandler(function(){if(tab)tab.classList.add('hidden')})
+    .withFailureHandler(function(){if(tab)tab.title='ログイン確認に失敗しました。'})
     .checkWorkspaceIdentity();
 
   if(!importButton)return;
