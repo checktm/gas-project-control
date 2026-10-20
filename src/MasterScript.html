@@ -27,7 +27,8 @@ function renderMasterScreen(){
   const settingsMode=masterState.type==='settings';
   const usersMode=masterState.type==='users';
   const importButton=$('importMembersAsUsersButton');
-  if(importButton)importButton.classList.toggle('hidden',!usersMode);
+  if(importButton){importButton.classList.toggle('hidden',!usersMode);importButton.disabled=false;}
+  $('newMasterButton').disabled=false;
   $('newMasterButton').classList.toggle('hidden',settingsMode);
   $('showInactiveMasters').closest('label').classList.toggle('hidden',settingsMode);
   document.querySelectorAll('.master-tab').forEach(function(btn){btn.classList.toggle('active',btn.dataset.masterType===masterState.type)});
@@ -152,6 +153,6 @@ $('masterRows').onclick=function(e){const row=e.target.closest('[data-master-id]
 $('masterForm').onsubmit=saveMaster;
 document.querySelectorAll('.master-tab').forEach(function(btn){btn.onclick=function(){masterState.type=btn.dataset.masterType;masterState.selectedId=null;masterState.creating=false;$('masterSearch').value='';if(masterState.type==='users'){
   $('masterRows').innerHTML='<div class="loading-row">読み込み中...</div>';
-  google.script.run.withSuccessHandler(function(users){masterState.data=masterState.data||{};masterState.data.users=users;renderMasterScreen()}).withFailureHandler(function(error){masterState.type='members';renderMasterScreen();window.alert('ユーザー管理を開けません。'+(error&&error.message||error))}).getUsersMasterData();
+  google.script.run.withSuccessHandler(function(users){masterState.data=masterState.data||{};masterState.data.users=users;renderMasterScreen()}).withFailureHandler(function(error){masterState.data=masterState.data||{};masterState.data.users=[];renderMasterScreen();$('masterRows').innerHTML='<div class="error-banner">ユーザマスタを読み込めません。'+escapeHtml(error&&error.message?error.message:String(error))+'<div style="margin-top:8px">初回は開発用スプレッドシートの Users シートに、有効な ADMIN を先に登録してください。本人のメールアドレスを取得できない場合は公開設定の検証が必要です。</div></div>';$('newMasterButton').disabled=true;$('importMembersAsUsersButton').disabled=true}).getUsersMasterData();
 }else renderMasterScreen()}});
 </script>
