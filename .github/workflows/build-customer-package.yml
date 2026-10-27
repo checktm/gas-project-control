@@ -62,6 +62,8 @@ jobs:
             geminiApiKey: ''
           };
           EOF
+          # 元のsrc/は従来どおり残し、コピー用の統合版を別ディレクトリへ生成する。
+          python scripts/build_compact_customer.py --src src --dest "dist/$PACKAGE/compact"
           (cd dist && zip -r "$PACKAGE.zip" "$PACKAGE")
           echo "PACKAGE_NAME=$PACKAGE" >> "$GITHUB_ENV"
 
