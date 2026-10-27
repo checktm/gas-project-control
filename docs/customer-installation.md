@@ -191,3 +191,31 @@ AI要約を有効化する場合は、APIキーの所有者・利用料・秘密
 - Webアプリから問い合わせ一覧が表示できる
 - テスト問い合わせへの返信が同じGmailスレッドに残る
 - モバイル表示を確認した
+
+
+## 10. コピー作業を減らす統合版（compact）
+
+`Build Customer Package` では、従来の完全ソース `src/` に加えて `compact/` を同梱する。
+開発上のファイル分割を保ったまま、配布時のみ生成する方式である。ビルダーは `scripts/build_compact_customer.py`。
+
+### 統合版の構成
+
+- `CustomerBackend.gs`: `Code.gs` と `DeploymentSecrets.gs` 以外の全 `.gs` の内容を統合
+- `CustomerStyles.html`: Indexで利用するすべてのStyle HTMLを読込順に統合
+- `CustomerScripts.html`: Indexで利用するすべてのScript HTMLを読込順に統合
+- `Index.html`: `CustomerStyles` / `CustomerScripts` を読み込む統合版
+- `Code.gs`, `appsscript.json`: 参照・新規導入用。既存顧客の環境固有値を上書きしない
+- `MIGRATION.txt`: 初回切替手順
+
+### 初回切替
+
+1. 顧客Apps ScriptプロジェクトとSpreadsheetをバックアップし、現在のGASソースを保存する。
+2. 統合版`Index.html`へ更新し、`CustomerStyles.html`、`CustomerScripts.html`、`CustomerBackend.gs`を作成する。
+3. **統合済みの個別 `.gs` ファイルを削除する**（重複したグローバルconst/function宣言を防ぐ）。`Code.gs` と `DeploymentSecrets.gs` は残す。
+4. 旧個別 `.html` ファイルは使用されなくなるが、切替が完了するまで残してよい。
+5. `Code.gs` の顧客Spreadsheet ID、`DeploymentSecrets.gs` の顧客APIキー、`appsscript.json` の既存Web公開設定を維持する。
+6. 新しいバージョンをデプロイし、既存画面、メール取込/返信、マスタ操作、トリガーを確認する。
+
+**通常の更新**は原則 `CustomerBackend.gs`、`CustomerStyles.html`、`CustomerScripts.html` の3ファイルと、必要に応じて`Index.html`だけを更新する。
+
+**注意**：`src/` と `compact/` を同時にGASへ入れてはならない。二重定義によるエラーの原因となる。また、統合版は自動デプロイやOAuth権限緩和を行うものではない。既存のユーザーアクセス制御機能は別途未完了の箇所があるため、統合によって認証が強化されるわけではない。
