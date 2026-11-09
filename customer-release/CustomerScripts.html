@@ -1,0 +1,2094 @@
+<!-- bundled from DashboardScript.html -->
+<script>
+const dashboardState={data:null,loading:false};
+
+function loadDashboardData(force){
+  if(dashboardState.loading)return;
+  if(dashboardState.data&&!force){renderDashboard();return}
+  dashboardState.loading=true;
+  $('dashboardStatus').textContent='読み込み中...';
+  google.script.run
+    .withSuccessHandler(function(data){dashboardState.loading=false;dashboardState.data=data;renderDashboard()})
+    .withFailureHandler(function(error){
+      dashboardState.loading=false;
+      $('dashboardStatus').textContent='読み込みに失敗しました。'+(error&&error.message?error.message:String(error));
+    })
+    .getDashboardData();
+}
+
+function renderDashboard(){
+  const data=dashboardState.data||{summary:{},masters:{},recent:[]};
+  const s=data.summary||{};
+  const m=data.masters||{};
+  setDashboardText('dashOpen',s.open||0);
+  setDashboardText('dashNew',s.newCount||0);
+  setDashboardText('dashUnmatched',s.unmatched||0);
+  setDashboardText('dashOverdue',s.overdue||0);
+  setDashboardText('dashCustomers',m.customers||0);
+  setDashboardText('dashContacts',m.contacts||0);
+  setDashboardText('dashMembers',m.members||0);
+  setDashboardText('dashCategories',m.categories||0);
+  $('dashboardStatus').textContent='最終集計 '+formatLongDateTime(data.generatedAt||'');
+  $('mailImportState').textContent=data.mailImportEnabled?'メール自動取込：有効':'メール自動取込：無効';
+  $('mailImportState').className='dashboard-chip '+(data.mailImportEnabled?'ok':'warn');
+  renderDashboardBuild();
+  renderRecentInquiries(data.recent||[]);
+}
+
+function renderDashboardBuild(){
+  const config=window.APP_CONFIG_CLIENT||{};
+  $('buildSha').textContent=config.buildSha&&config.buildSha!=='__BUILD_SHA__'?config.buildSha:'未設定';
+  $('buildTime').textContent=config.buildTime&&config.buildTime!=='__BUILD_TIME__'?formatLongDateTime(config.buildTime):'未設定';
+}
+
+function renderRecentInquiries(items){
+  const container=$('dashboardRecent');
+  container.innerHTML='';
+  $('dashboardRecentEmpty').classList.toggle('hidden',items.length>0);
+  items.forEach(function(item){
+    const row=document.createElement('button');
+    const summary=String(item.summary||'').trim()||'問い合わせ概要未設定';
+    row.type='button';
+    row.className='dashboard-recent-row';
+    row.dataset.inquiryId=item.id;
+    row.innerHTML='<span><strong>'+escapeHtml(summary)+'</strong><small>'+escapeHtml(item.customerName||'未特定')+' / '+escapeHtml(item.assignedMemberName||'未担当')+' / メール件名: '+escapeHtml(item.subject||'(件名なし)')+'</small></span>'+
+      '<span><small>'+escapeHtml(formatShortDateTime(item.lastMessageAt||''))+'</small><span class="status-pill '+inquiryStatusClass(item.status)+'">'+escapeHtml(inquiryStatusLabels[item.status]||item.status)+'</span></span>';
+    container.appendChild(row);
+  });
+}
+
+function setDashboardText(id,value){$(id).textContent=String(value)}
+
+function openDashboardInquiry(id){
+  switchMainView('inquiries');
+  if(inquiryState.data){selectInquiry(id);return}
+  const wait=setInterval(function(){
+    if(!inquiryState.loading&&inquiryState.data){clearInterval(wait);selectInquiry(id)}
+  },100);
+}
+</script>
+<!-- bundled from InquiryScript.html -->
+<script>
+const $=id=>document.getElementById(id);
+const inquiryState={data:null,selectedId:null,loading:false,messagesByInquiry:{},messageLoadingId:null};
+const inquiryStatusLabels={NEW:'新規',IN_PROGRESS:'対応中',WAITING_CUSTOMER:'顧客回答待ち',RESOLVED:'解決',CLOSED:'完了'};
+const inquiryPriorityLabels={HIGH:'高',MEDIUM:'中',LOW:'低'};
+const inquiryMatchLabels={EXACT_CONTACT:'担当者一致',DOMAIN_MATCH:'ドメイン一致',AMBIGUOUS:'候補複数',UNMATCHED:'顧客未特定',MANUAL:'手動設定'};
+
+function switchMainView(view){
+  const inquiry=view==='inquiries';
+  $('inquiryView').classList.toggle('hidden',!inquiry);
+  $('masterView').classList.toggle('hidden',inquiry);
+  $('navInquiries').classList.toggle('active',inquiry);
+  $('navMasters').classList.toggle('active',!inquiry);
+  $('inquirySummary').classList.toggle('hidden',!inquiry);
+  $('masterSummary').classList.toggle('hidden',inquiry);
+  $('screenTitle').textContent=inquiry?'問い合わせ管理':'マスタ管理';
+  if(inquiry){
+    if(!inquiryState.data)loadInquiryData();
+    else renderInquiryScreen();
+  }else if(typeof loadMasterData==='function'){
+    loadMasterData(false);
+  }
+}
+
+function loadInquiryData(preserveSelection){
+  if(inquiryState.loading)return;
+  inquiryState.loading=true;
+  $('inquiryRows').innerHTML='<div class="loading-row">読み込み中...</div>';
+  $('inquiryEmpty').classList.add('hidden');
+  google.script.run
+    .withSuccessHandler(function(data){
+      inquiryState.loading=false;
+      inquiryState.data=data;
+      if(!preserveSelection||!findInquiry(inquiryState.selectedId))inquiryState.selectedId=null;
+      renderInquiryScreen();
+      if(inquiryState.selectedId&&!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiryState.selectedId))loadInquiryMessages(inquiryState.selectedId);
+    })
+    .withFailureHandler(function(error){
+      inquiryState.loading=false;
+      $('inquiryRows').innerHTML='<div class="error-banner">読み込みに失敗しました。'+escapeHtml(error&&error.message?error.message:String(error))+'</div>';
+    })
+    .getInquiryScreenData();
+}
+
+function renderInquiryScreen(){
+  const data=inquiryState.data||{inquiries:[],customers:[],contacts:[],members:[],categories:[]};
+  const filtered=getFilteredInquiries();
+  $('inquiryCountSummary').textContent='問い合わせ '+data.inquiries.length+'件';
+  const unmatched=data.inquiries.filter(i=>['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus)).length;
+  $('unmatchedSummary').textContent='顧客未特定 '+unmatched+'件';
+  $('inquiryRows').innerHTML='';
+  $('inquiryEmpty').classList.toggle('hidden',filtered.length>0);
+
+  filtered.forEach(function(inquiry){
+    const row=document.createElement('div');
+    row.className='inquiry-row inquiry-row-grid'+(inquiryState.selectedId===inquiry.id?' selected':'');
+    row.dataset.inquiryId=inquiry.id;
+    const customerName=inquiry.customerName||'未特定';
+    const summary=String(inquiry.summary||'').trim();
+    const summaryText=summary||'問い合わせ概要未設定';
+    const mailSubject=String(inquiry.subject||'(件名なし)');
+    const secondary=[inquiry.category?'分類: '+inquiry.category:'','メール件名: '+mailSubject].filter(Boolean).join(' / ');
+    row.innerHTML=
+      '<div><div class="inquiry-primary">'+escapeHtml(formatShortDateTime(inquiry.lastMessageAt||inquiry.receivedAt))+'</div></div>'+
+      '<div><div class="inquiry-primary '+(!inquiry.customerName?'match-warning':'')+'">'+escapeHtml(customerName)+'</div><div class="inquiry-secondary">'+escapeHtml(inquiry.contactName||inquiry.contactEmail||'')+'</div></div>'+
+      '<div><div class="inquiry-primary"><span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(summaryText)+'</div><div class="inquiry-secondary">'+escapeHtml(secondary)+'</div></div>'+
+      '<div><div class="inquiry-primary">'+escapeHtml(inquiry.assignedMemberName||'未担当')+'</div></div>'+
+      '<div><span class="status-pill '+inquiryStatusClass(inquiry.status)+'">'+escapeHtml(inquiryStatusLabels[inquiry.status]||inquiry.status)+'</span></div>'+
+      '<div><div class="inquiry-primary">'+escapeHtml(inquiry.dueDate?formatDate(inquiry.dueDate):'—')+'</div></div>';
+    $('inquiryRows').appendChild(row);
+  });
+
+  renderInquiryDetail();
+}
+
+function getFilteredInquiries(){
+  if(!inquiryState.data)return[];
+  const q=String($('inquirySearch').value||'').trim().toLowerCase();
+  const status=$('inquiryStatusFilter').value;
+  const priority=$('inquiryPriorityFilter').value;
+  const unmatchedOnly=$('unmatchedOnly').checked;
+  return inquiryState.data.inquiries.filter(function(i){
+    const hay=[i.customerName,i.contactName,i.contactEmail,i.subject,i.summary,i.category].join(' ').toLowerCase();
+    return(!q||hay.includes(q))&&(status==='all'||i.status===status)&&(priority==='all'||i.priority===priority)&&(!unmatchedOnly||['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus));
+  });
+}
+
+function selectInquiry(id){
+  inquiryState.selectedId=id;
+  renderInquiryScreen();
+  if(!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))loadInquiryMessages(id);
+}
+
+function loadInquiryMessages(inquiryId,force){
+  const id=String(inquiryId||'');
+  if(!id)return;
+  if(!force&&Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id)){renderInquiryDetail();return}
+  if(inquiryState.messageLoadingId===id)return;
+  inquiryState.messageLoadingId=id;
+  if(inquiryState.selectedId===id){
+    $('messageCount').textContent='読み込み中...';
+    $('inquiryMessages').innerHTML='<div class="loading-row">メール履歴を読み込み中...</div>';
+  }
+  google.script.run
+    .withSuccessHandler(function(messages){
+      inquiryState.messageLoadingId=null;
+      inquiryState.messagesByInquiry[id]=Array.isArray(messages)?messages:[];
+      if(inquiryState.selectedId===id)renderInquiryDetail();
+    })
+    .withFailureHandler(function(error){
+      inquiryState.messageLoadingId=null;
+      if(inquiryState.selectedId===id){
+        $('messageCount').textContent='';
+        $('inquiryMessages').innerHTML='<div class="error-banner">メール履歴の読み込みに失敗しました。'+escapeHtml(error&&error.message?error.message:String(error))+'</div>';
+      }
+    })
+    .getInquiryMessages(id);
+}
+
+function renderInquiryDetail(){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  $('inquiryDetailEmpty').classList.toggle('hidden',!!inquiry);
+  $('inquiryDetailContent').classList.toggle('hidden',!inquiry);
+  if(!inquiry)return;
+
+  const summary=String(inquiry.summary||'').trim();
+  $('inquiryDetailSubject').textContent=summary||'問い合わせ概要未設定';
+  $('inquiryDetailMeta').textContent='メール件名: '+String(inquiry.subject||'(件名なし)')+(inquiry.receivedAt?' / 初回受信 '+formatLongDateTime(inquiry.receivedAt):'')+(inquiry.contactEmail?' / '+inquiry.contactEmail:'');
+  setMatchBadge(inquiry.customerMatchStatus);
+  fillSelect($('inquiryStatusInput'),(inquiryState.data.statusValues||[]).map(v=>({value:v,label:inquiryStatusLabels[v]||v})),inquiry.status,false);
+  fillSelect($('inquiryPriorityInput'),(inquiryState.data.priorityValues||[]).map(v=>({value:v,label:inquiryPriorityLabels[v]||v})),inquiry.priority,false);
+  fillSelect($('inquiryCustomerInput'),(inquiryState.data.customers||[]).filter(c=>c.status!=='INACTIVE').map(c=>({value:c.id,label:c.name||c.id})),inquiry.customerId,true,'未特定');
+  fillContactSelect(inquiry.customerId,inquiry.contactId);
+  fillSelect($('inquiryAssigneeInput'),(inquiryState.data.members||[]).filter(m=>m.active).map(m=>({value:m.id,label:m.name||m.id})),inquiry.assignedMemberId,true,'未担当');
+  const categories=(inquiryState.data.categories||[]).filter(c=>c.active||c.name===inquiry.category).map(c=>({value:c.name,label:c.name}));
+  fillSelect($('inquiryCategoryInput'),categories,inquiry.category,true,'未分類');
+  $('inquiryDueDateInput').value=inquiry.dueDate||'';
+  $('inquirySummaryInput').value=inquiry.summary||'';
+  $('inquiryNextActionInput').value=inquiry.nextAction||'';
+  $('inquiryFormMessage').textContent='';
+  $('inquiryUpdatedAt').textContent=inquiry.updatedAt?'最終更新 '+formatLongDateTime(inquiry.updatedAt):'';
+
+  if(Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiry.id)){
+    renderInquiryMessages(inquiryState.messagesByInquiry[inquiry.id]);
+  }else if(inquiryState.messageLoadingId===inquiry.id){
+    $('messageCount').textContent='読み込み中...';
+    $('inquiryMessages').innerHTML='<div class="loading-row">メール履歴を読み込み中...</div>';
+  }else{
+    $('messageCount').textContent='';
+    $('inquiryMessages').innerHTML='<div class="loading-row">メール履歴を読み込みます...</div>';
+  }
+}
+
+function fillContactSelect(customerId,selectedId){
+  const contacts=(inquiryState.data.contacts||[]).filter(function(c){return c.active&&(!customerId||c.customerId===customerId)});
+  fillSelect($('inquiryContactInput'),contacts.map(c=>({value:c.id,label:(c.name||c.email||c.id)+(c.email&&c.name?' / '+c.email:'')})),selectedId,true,'未特定');
+}
+
+function renderInquiryMessages(messages){
+  $('messageCount').textContent=messages.length+'件';
+  $('inquiryMessages').innerHTML='';
+  if(!messages.length){
+    $('inquiryMessages').innerHTML='<div class="empty-state"><span>メール履歴はありません。</span></div>';
+    return;
+  }
+  messages.forEach(function(m){
+    const card=document.createElement('article');
+    const inbound=String(m.direction||'INBOUND').toUpperCase()==='INBOUND';
+    const splitButton=inbound?'<button type="button" class="mail-split-button" data-split-message-id="'+escapeHtml(m.id)+'">別問い合わせ</button>':'';
+    card.className='mail-card '+String(m.direction||'INBOUND').toLowerCase();
+    card.innerHTML='<div class="mail-card-header"><span class="mail-card-from">'+escapeHtml((m.direction==='OUTBOUND'?'自社 → ':'顧客 → ')+(m.fromEmail||''))+'</span><span class="mail-card-header-right"><span>'+escapeHtml(formatLongDateTime(m.sentAt))+'</span>'+splitButton+'</span></div><div class="mail-card-subject">'+escapeHtml(m.subject||'(件名なし)')+'</div><div class="mail-card-body">'+escapeHtml(m.body||'')+'</div>';
+    $('inquiryMessages').appendChild(card);
+  });
+}
+
+function splitInquiryMessage(messageId){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  if(!inquiry)return;
+  const messages=inquiryState.messagesByInquiry[inquiry.id]||[];
+  const message=messages.find(function(item){return String(item.id||'')===String(messageId||'')});
+  if(!message)return;
+  const confirmed=window.confirm(
+    'この受信メールから後のメールを、新しい問い合わせとして分離します。\n\n'+
+    '日時: '+formatLongDateTime(message.sentAt)+'\n'+
+    '件名: '+String(message.subject||'(件名なし)')+'\n\n'+
+    '元の問い合わせは残ります。続けますか？'
+  );
+  if(!confirmed)return;
+
+  const buttons=document.querySelectorAll('[data-split-message-id="'+String(messageId).replace(/"/g,'\\"')+'"]');
+  buttons.forEach(function(button){button.disabled=true;button.textContent='分離中...'});
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+      if(result&&Array.isArray(result.sourceMessages))inquiryState.messagesByInquiry[inquiry.id]=result.sourceMessages;
+      if(result&&result.newInquiryId&&Array.isArray(result.newMessages))inquiryState.messagesByInquiry[result.newInquiryId]=result.newMessages;
+      if(result&&result.newInquiryId){
+        selectInquiry(result.newInquiryId);
+        if(typeof setInquiryDetailMode==='function')setInquiryDetailMode('mail');
+      }else{
+        renderInquiryScreen();
+      }
+      window.alert('新しい問い合わせとして分離しました。');
+    })
+    .withFailureHandler(function(error){
+      buttons.forEach(function(button){button.disabled=false;button.textContent='別問い合わせ'});
+      window.alert('問い合わせの分離に失敗しました。 '+(error&&error.message?error.message:String(error)));
+    })
+    .splitInquiryFromMessage({inquiryId:inquiry.id,messageId:messageId});
+}
+
+function saveInquiry(e){
+  e.preventDefault();
+  const inquiry=findInquiry(inquiryState.selectedId);
+  if(!inquiry)return;
+  $('saveInquiryButton').disabled=true;
+  $('inquiryFormMessage').textContent='保存中...';
+  google.script.run
+    .withSuccessHandler(function(data){
+      $('saveInquiryButton').disabled=false;
+      inquiryState.data=data;
+      $('inquiryFormMessage').textContent='保存しました。';
+      renderInquiryScreen();
+    })
+    .withFailureHandler(function(error){
+      $('saveInquiryButton').disabled=false;
+      $('inquiryFormMessage').textContent='保存に失敗しました。'+(error&&error.message?error.message:String(error));
+    })
+    .updateInquiry({
+      inquiryId:inquiry.id,
+      customerId:$('inquiryCustomerInput').value,
+      contactId:$('inquiryContactInput').value,
+      status:$('inquiryStatusInput').value,
+      priority:$('inquiryPriorityInput').value,
+      assignedMemberId:$('inquiryAssigneeInput').value,
+      category:$('inquiryCategoryInput').value,
+      dueDate:$('inquiryDueDateInput').value,
+      summary:$('inquirySummaryInput').value,
+      nextAction:$('inquiryNextActionInput').value
+    });
+}
+
+function findInquiry(id){return inquiryState.data&&inquiryState.data.inquiries.find(i=>i.id===id)}
+function fillSelect(el,options,value,allowBlank,blankLabel){
+  el.innerHTML='';
+  if(allowBlank){const o=document.createElement('option');o.value='';o.textContent=blankLabel||'—';el.appendChild(o)}
+  options.forEach(function(item){const o=document.createElement('option');o.value=item.value;o.textContent=item.label;el.appendChild(o)});
+  el.value=value||'';
+}
+function setMatchBadge(status){
+  const el=$('customerMatchBadge');
+  el.textContent=inquiryMatchLabels[status]||status||'';
+  el.className='match-badge '+(['EXACT_CONTACT','MANUAL'].includes(status)?'ok':status==='DOMAIN_MATCH'?'warn':['AMBIGUOUS','UNMATCHED'].includes(status)?'danger':'');
+}
+function inquiryStatusClass(status){return status==='CLOSED'||status==='RESOLVED'?'done':status==='WAITING_CUSTOMER'?'hold':status==='IN_PROGRESS'?'progress':''}
+function formatDate(value){if(!value)return'';const p=String(value).slice(0,10).split('-');return p.length===3?p[0]+'/'+p[1]+'/'+p[2]:value}
+function formatShortDateTime(value){if(!value)return'—';const d=new Date(value);if(isNaN(d))return value;return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+function formatLongDateTime(value){if(!value)return'';const d=new Date(value);if(isNaN(d))return value;return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+function escapeHtml(value){return String(value==null?'':value).replace(/[&<>'\"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c]})}
+
+$('navInquiries').onclick=function(){switchMainView('inquiries')};
+$('navMasters').onclick=function(){switchMainView('masters')};
+$('refreshInquiries').onclick=function(){loadInquiryData(true)};
+$('inquiryRows').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(!row)return;selectInquiry(row.dataset.inquiryId)};
+$('inquiryMessages').onclick=function(e){const button=e.target.closest('[data-split-message-id]');if(!button)return;splitInquiryMessage(button.dataset.splitMessageId)};
+$('inquiryCustomerInput').onchange=function(){fillContactSelect(this.value,'')};
+$('inquiryForm').onsubmit=saveInquiry;
+['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(id=>$(id).onchange=renderInquiryScreen);
+$('inquirySearch').oninput=renderInquiryScreen;
+loadInquiryData(false);
+</script>
+<!-- bundled from MasterScript.html -->
+<script>
+const masterState={data:null,type:'customers',selectedId:null,creating:false,loading:false};
+const masterMeta={
+  customers:{title:'顧客',description:'問い合わせ送信者を顧客へ紐付けるための会社・組織を管理します。'},
+  contacts:{title:'顧客担当者',description:'顧客担当者とメールアドレスを管理します。メール完全一致による自動判定に利用します。'},
+  members:{title:'社内メンバー',description:'問い合わせ担当として選択する社内メンバーを管理します。'},
+  categories:{title:'問い合わせ分類',description:'問い合わせに設定する分類を管理します。'},
+  users:{title:'ユーザー',description:'このシステムへのアクセスを許可するWorkspaceユーザーを管理します。'},
+  settings:{title:'システム設定',description:'メール取込・問い合わせ表示に関する安全な設定項目を管理します。'}
+};
+
+function loadMasterData(force){
+  if(masterState.loading)return;
+  if(masterState.data&&!force){renderMasterScreen();return}
+  masterState.loading=true;
+  $('masterRows').innerHTML='<div class="loading-row">読み込み中...</div>';
+  google.script.run
+    .withSuccessHandler(function(data){masterState.loading=false;masterState.data=data;renderMasterScreen()})
+    .withFailureHandler(function(error){masterState.loading=false;$('masterRows').innerHTML='<div class="error-banner">読み込みに失敗しました。'+escapeHtml(error&&error.message?error.message:String(error))+'</div>'})
+    .getMasterScreenData();
+}
+
+function renderMasterScreen(){
+  const meta=masterMeta[masterState.type];
+  $('masterListTitle').textContent=meta.title;
+  $('masterListDescription').textContent=meta.description;
+  const settingsMode=masterState.type==='settings';
+  const usersMode=masterState.type==='users';
+  const importButton=$('importMembersAsUsersButton');
+  if(importButton){importButton.classList.toggle('hidden',!usersMode);importButton.disabled=false;}
+  $('newMasterButton').disabled=false;
+  $('newMasterButton').classList.toggle('hidden',settingsMode);
+  $('showInactiveMasters').closest('label').classList.toggle('hidden',settingsMode);
+  document.querySelectorAll('.master-tab').forEach(function(btn){btn.classList.toggle('active',btn.dataset.masterType===masterState.type)});
+  renderMasterRows();
+  renderMasterEditor();
+}
+
+function getMasterItems(){
+  const data=masterState.data||{};
+  return Array.isArray(data[masterState.type])?data[masterState.type]:[];
+}
+
+function renderMasterRows(){
+  const q=String($('masterSearch').value||'').trim().toLowerCase();
+  const showInactive=$('showInactiveMasters').checked;
+  let items=getMasterItems().filter(function(item){
+    if(masterState.type!=='settings'&&!showInactive&&!masterItemActive(item))return false;
+    const hay=Object.keys(item).map(k=>String(item[k]==null?'':item[k])).join(' ').toLowerCase();
+    return !q||hay.includes(q);
+  });
+  $('masterRows').innerHTML='';
+  $('masterEmpty').classList.toggle('hidden',items.length>0);
+  items.forEach(function(item){
+    const row=document.createElement('button');
+    const itemId=masterItemId(item);
+    row.type='button';
+    row.className='master-row'+(String(masterState.selectedId)===String(itemId)?' selected':'');
+    row.dataset.masterId=itemId;
+    row.innerHTML=masterRowHtml(item);
+    $('masterRows').appendChild(row);
+  });
+}
+
+function masterItemId(item){return masterState.type==='settings'?item.key:item.id}
+function masterItemActive(item){
+  if(masterState.type==='customers')return item.status!=='INACTIVE';
+  if(['contacts','members','categories','users'].includes(masterState.type))return item.active!==false;
+  return true;
+}
+function masterRowHtml(item){
+  if(masterState.type==='customers')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.domain||'ドメイン未設定')+'</small></span><span class="master-state '+(item.status==='INACTIVE'?'inactive':'')+'">'+(item.status==='INACTIVE'?'無効':'有効')+'</span>';
+  if(masterState.type==='contacts')return '<span><strong>'+escapeHtml(item.name||item.email||'(名称なし)')+'</strong><small>'+escapeHtml(customerNameById(item.customerId)+' / '+(item.email||''))+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  if(masterState.type==='users')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.email||'')+' / '+escapeHtml(item.role==='ADMIN'?'管理者':'一般ユーザー')+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  if(masterState.type==='members')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>'+escapeHtml(item.email||'')+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  if(masterState.type==='categories')return '<span><strong>'+escapeHtml(item.name||'(名称なし)')+'</strong><small>表示順 '+escapeHtml(item.displayOrder===''?'—':item.displayOrder)+'</small></span><span class="master-state '+(!item.active?'inactive':'')+'">'+(!item.active?'無効':'有効')+'</span>';
+  return '<span><strong>'+escapeHtml(settingLabel(item.key))+'</strong><small>'+escapeHtml(item.description||'')+'</small></span><span class="setting-value-preview">'+escapeHtml(maskSettingValue(item.key,item.value))+'</span>';
+}
+
+function renderMasterEditor(){
+  const item=masterState.creating?null:getMasterItems().find(function(x){return String(masterItemId(x))===String(masterState.selectedId)});
+  const show=masterState.creating||!!item;
+  $('masterEditorEmpty').classList.toggle('hidden',show);
+  $('masterForm').classList.toggle('hidden',!show);
+  if(!show)return;
+  $('masterEditorTitle').textContent=masterState.creating?'新規'+masterMeta[masterState.type].title:masterMeta[masterState.type].title+'編集';
+  $('masterFields').innerHTML=buildMasterFields(item||{});
+  $('masterFormMessage').textContent='';
+  $('masterEditorHint').textContent=masterState.type==='settings'?'変更は次回の画面読込から反映されます。':'削除せず無効化して履歴参照を維持します。';
+}
+
+function buildMasterFields(item){
+  if(masterState.type==='customers')return fieldText('masterName','顧客名',item.name,true)+fieldText('masterDomain','メールドメイン',item.domain,false,'example.co.jp')+fieldSelect('masterStatus','状態',[['ACTIVE','有効'],['INACTIVE','無効']],item.status||'ACTIVE')+fieldTextarea('masterNote','備考',item.note);
+  if(masterState.type==='contacts')return fieldSelect('masterCustomerId','顧客',(masterState.data.customers||[]).filter(c=>c.status!=='INACTIVE'||c.id===item.customerId).map(c=>[c.id,c.name||c.id]),item.customerId,'顧客を選択')+fieldText('masterName','担当者名',item.name)+fieldText('masterEmail','メールアドレス',item.email,true,'name@example.co.jp','email')+fieldText('masterPhone','電話番号',item.phone)+fieldCheckbox('masterActive','有効',item.active!==false);
+  if(masterState.type==='members')return fieldText('masterName','メンバー名',item.name,true)+fieldText('masterEmail','メールアドレス',item.email,false,'name@example.co.jp','email')+fieldNumber('masterDisplayOrder','表示順',item.displayOrder)+fieldCheckbox('masterActive','有効',item.active!==false);
+  if(masterState.type==='users')return fieldText('masterName','ユーザー名',item.name,true)+fieldText('masterEmail','Google Workspaceメールアドレス',item.email,true,'name@example.co.jp','email')+fieldSelect('masterRole','権限',[['USER','一般ユーザー'],['ADMIN','管理者']],item.role||'USER')+fieldSelect('masterMemberId','社内メンバー',(masterState.data.members||[]).map(m=>[m.id,m.name||m.id]),item.memberId,'紐付けなし')+fieldCheckbox('masterActive','有効',item.active!==false);
+  if(masterState.type==='categories')return fieldText('masterName','分類名',item.name,true)+fieldNumber('masterDisplayOrder','表示順',item.displayOrder)+fieldCheckbox('masterActive','有効',item.active!==false);
+  return buildSettingField(item);
+}
+
+function fieldText(id,label,value,required,placeholder,type){return '<label>'+escapeHtml(label)+(required?' <span class="required">*</span>':'')+'<input id="'+id+'" type="'+(type||'text')+'" value="'+escapeAttr(value||'')+'" placeholder="'+escapeAttr(placeholder||'')+'" '+(required?'required':'')+'></label>'}
+function fieldNumber(id,label,value){return '<label>'+escapeHtml(label)+'<input id="'+id+'" type="number" value="'+escapeAttr(value==null?'':value)+'"></label>'}
+function fieldTextarea(id,label,value){return '<label>'+escapeHtml(label)+'<textarea id="'+id+'" rows="4">'+escapeHtml(value||'')+'</textarea></label>'}
+function fieldCheckbox(id,label,checked){return '<label class="master-checkbox"><input id="'+id+'" type="checkbox" '+(checked?'checked':'')+'><span>'+escapeHtml(label)+'</span></label>'}
+function fieldSelect(id,label,options,value,blank){let html='<label>'+escapeHtml(label)+'<select id="'+id+'">';if(blank)html+='<option value="">'+escapeHtml(blank)+'</option>';options.forEach(function(o){html+='<option value="'+escapeAttr(o[0])+'" '+(String(o[0])===String(value)?'selected':'')+'>'+escapeHtml(o[1])+'</option>'});return html+'</select></label>'}
+function buildSettingField(item){
+  if(item.key==='MAIL_IMPORT_ENABLED')return '<label>設定<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><select id="masterSettingValue"><option value="TRUE" '+(item.value==='TRUE'?'selected':'')+'>有効</option><option value="FALSE" '+(item.value!=='TRUE'?'selected':'')+'>無効</option></select></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
+  if(['INQUIRY_GROUP_ADDRESS','INTERNAL_MAIL_DOMAINS','INQUIRY_EXCLUDED_DOMAINS'].includes(item.key))return '<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><label>'+escapeHtml(settingLabel(item.key))+'<textarea id="masterSettingValue" rows="4" placeholder="'+(item.key==='INQUIRY_GROUP_ADDRESS'?'support@example.co.jp, sales@example.co.jp':'example.co.jp, example.com')+'">'+escapeHtml(item.value||'')+'</textarea></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
+  const type=item.key==='MAIL_IMPORT_MAX_THREADS'?'number':'text';
+  return '<input id="masterSettingKey" type="hidden" value="'+escapeAttr(item.key)+'"><label>'+escapeHtml(settingLabel(item.key))+'<input id="masterSettingValue" type="'+type+'" value="'+escapeAttr(item.value||'')+'"></label><div class="setting-help">'+escapeHtml(item.description||'')+'</div>';
+}
+
+function saveMaster(e){
+  e.preventDefault();
+  const current=masterState.creating?null:getMasterItems().find(x=>String(masterItemId(x))===String(masterState.selectedId));
+  $('saveMasterButton').disabled=true;
+  $('masterFormMessage').textContent='保存中...';
+  let method,payload;
+  if(masterState.type==='customers'){method='saveCustomerMaster';payload={id:current&&current.id,name:$('masterName').value,domain:$('masterDomain').value,status:$('masterStatus').value,note:$('masterNote').value}}
+  if(masterState.type==='contacts'){method='saveContactMaster';payload={id:current&&current.id,customerId:$('masterCustomerId').value,name:$('masterName').value,email:$('masterEmail').value,phone:$('masterPhone').value,active:$('masterActive').checked}}
+  if(masterState.type==='members'){method='saveMemberMaster';payload={id:current&&current.id,name:$('masterName').value,email:$('masterEmail').value,displayOrder:$('masterDisplayOrder').value,active:$('masterActive').checked}}
+  if(masterState.type==='categories'){method='saveInquiryCategoryMaster';payload={id:current&&current.id,name:$('masterName').value,displayOrder:$('masterDisplayOrder').value,active:$('masterActive').checked}}
+  if(masterState.type==='users'){method='saveAccessUser';payload={id:current&&current.id,name:$('masterName').value,email:$('masterEmail').value,role:$('masterRole').value,memberId:$('masterMemberId').value,active:$('masterActive').checked}}
+  if(masterState.type==='settings'){method='saveSystemSetting';payload={key:$('masterSettingKey').value,value:$('masterSettingValue').value}}
+  google.script.run
+    .withSuccessHandler(function(result){
+      $('saveMasterButton').disabled=false;
+      if(masterState.type==='users'){
+        masterState.data.users=result.users||[];
+      }else{
+        masterState.data=result&&result.data?result.data:result;
+      }
+      if(result&&result.id)masterState.selectedId=result.id;
+      masterState.creating=false;
+      $('masterFormMessage').textContent='保存しました。';
+      renderMasterScreen();
+      inquiryState.data=null;
+      if(typeof dashboardState!=='undefined')dashboardState.data=null;
+    })
+    .withFailureHandler(function(error){$('saveMasterButton').disabled=false;$('masterFormMessage').textContent='保存に失敗しました。'+(error&&error.message?error.message:String(error))})
+    [method](payload);
+}
+
+function customerNameById(id){const c=(masterState.data&&masterState.data.customers||[]).find(x=>x.id===id);return c?c.name:'顧客未設定'}
+function settingLabel(key){return {INQUIRY_GROUP_ADDRESS:'問い合わせ受付アドレス（複数可）',MAIL_SEARCH_QUERY:'メール検索条件',MAIL_IMPORT_MAX_THREADS:'1回の最大スレッド数',MAIL_IMPORT_ENABLED:'メール自動取込',INTERNAL_MAIL_DOMAINS:'自社メールドメイン',INQUIRY_EXCLUDED_DOMAINS:'問い合わせ対象外ドメイン'}[key]||key}
+function maskSettingValue(key,value){if(key==='MAIL_IMPORT_ENABLED')return value==='TRUE'?'有効':'無効';return String(value||'')}
+function escapeAttr(value){return escapeHtml(value).replace(/`/g,'&#96;')}
+
+$('masterSearch').oninput=renderMasterRows;
+$('showInactiveMasters').onchange=renderMasterRows;
+$('newMasterButton').onclick=function(){masterState.creating=true;masterState.selectedId=null;renderMasterScreen()};
+$('masterRows').onclick=function(e){const row=e.target.closest('[data-master-id]');if(!row)return;masterState.creating=false;masterState.selectedId=row.dataset.masterId;renderMasterScreen()};
+$('masterForm').onsubmit=saveMaster;
+document.querySelectorAll('.master-tab').forEach(function(btn){btn.onclick=function(){masterState.type=btn.dataset.masterType;masterState.selectedId=null;masterState.creating=false;$('masterSearch').value='';if(masterState.type==='users'){
+  $('masterRows').innerHTML='<div class="loading-row">読み込み中...</div>';
+  google.script.run.withSuccessHandler(function(users){masterState.data=masterState.data||{};masterState.data.users=users;renderMasterScreen()}).withFailureHandler(function(error){masterState.data=masterState.data||{};masterState.data.users=[];renderMasterScreen();$('masterRows').innerHTML='<div class="error-banner">ユーザマスタを読み込めません。'+escapeHtml(error&&error.message?error.message:String(error))+'<div style="margin-top:8px">初回は開発用スプレッドシートの Users シートに、有効な ADMIN を先に登録してください。本人のメールアドレスを取得できない場合は公開設定の検証が必要です。</div></div>';$('newMasterButton').disabled=true;$('importMembersAsUsersButton').disabled=true}).getUsersMasterData();
+}else renderMasterScreen()}});
+</script>
+<!-- bundled from NavigationScript.html -->
+<script>
+window.switchMainView=function(view){
+  const dashboard=view==='dashboard';
+  const inquiry=view==='inquiries';
+  const masters=view==='masters';
+
+  $('dashboardView').classList.toggle('hidden',!dashboard);
+  $('inquiryView').classList.toggle('hidden',!inquiry);
+  $('masterView').classList.toggle('hidden',!masters);
+
+  $('navDashboard').classList.toggle('active',dashboard);
+  $('navInquiries').classList.toggle('active',inquiry);
+  $('navMasters').classList.toggle('active',masters);
+
+  $('dashboardSummary').classList.toggle('hidden',!dashboard);
+  $('inquirySummary').classList.toggle('hidden',!inquiry);
+  $('masterSummary').classList.toggle('hidden',!masters);
+
+  $('screenTitle').textContent=dashboard?'ダッシュボード':inquiry?'問い合わせ管理':'マスタ管理';
+
+  if(dashboard){
+    loadDashboardData(false);
+  }else if(inquiry){
+    if(!inquiryState.data)loadInquiryData();
+    else renderInquiryScreen();
+  }else if(typeof loadMasterData==='function'){
+    loadMasterData(false);
+  }
+};
+
+function ensureInquiryAiSummaryUi(){
+  if($('generateInquirySummaryButton'))return;
+  const textarea=$('inquirySummaryInput');
+  if(!textarea)return;
+  const label=textarea.closest('label');
+  if(!label)return;
+
+  const controls=document.createElement('div');
+  controls.className='ai-summary-controls';
+  controls.innerHTML='<button type="button" id="generateInquirySummaryButton" class="button subtle">AIで要約</button><span id="aiSummaryStatus" class="ai-summary-status">Geminiで概要候補を作成します</span>';
+  label.parentNode.insertBefore(controls,label.nextSibling);
+  $('generateInquirySummaryButton').onclick=generateInquirySummaryCandidate;
+}
+
+function generateInquirySummaryCandidate(){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  if(!inquiry)return;
+  const summaryInput=$('inquirySummaryInput');
+  const current=String(summaryInput.value||'').trim();
+  if(current&&!window.confirm('現在の概要をAI要約候補で置き換えます。続けますか？'))return;
+
+  const button=$('generateInquirySummaryButton');
+  const status=$('aiSummaryStatus');
+  button.disabled=true;
+  button.textContent='要約中...';
+  status.className='ai-summary-status';
+  status.textContent='メール履歴をGeminiで要約しています...';
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      button.disabled=false;
+      button.textContent='AIで要約';
+      summaryInput.value=result&&result.summary?result.summary:'';
+      status.className='ai-summary-status success';
+      status.textContent='AI要約を生成しました。内容を確認して保存してください。';
+      summaryInput.focus();
+    })
+    .withFailureHandler(function(error){
+      button.disabled=false;
+      button.textContent='AIで要約';
+      status.className='ai-summary-status error';
+      status.textContent='要約に失敗しました。'+(error&&error.message?error.message:String(error));
+    })
+    .generateInquirySummary(inquiry.id);
+}
+
+function ensureInquiryReplyUi(){
+  if($('inquiryReplyBody'))return;
+  const messageSection=document.querySelector('#inquiryDetailContent .message-section');
+  if(!messageSection)return;
+
+  const section=document.createElement('section');
+  section.className='inquiry-reply-section';
+  section.innerHTML='\
+    <div class="section-heading inquiry-reply-heading">\
+      <div><h3>返信</h3><span id="inquiryReplyRecipient" class="reply-recipient">宛先を確認中</span></div>\
+    </div>\
+    <textarea id="inquiryReplyBody" class="reply-textarea" rows="5" placeholder="顧客への返信内容を入力"></textarea>\
+    <div class="reply-actions">\
+      <span id="inquiryReplyStatus" class="reply-status"></span>\
+      <button type="button" id="sendInquiryReplyButton" class="button primary" disabled>返信を送信</button>\
+    </div>';
+  messageSection.parentNode.insertBefore(section,messageSection);
+  $('sendInquiryReplyButton').onclick=sendInquiryReplyFromScreen;
+  $('inquiryReplyBody').oninput=updateInquiryReplyUi;
+}
+
+function ensureInquiryCommunicationWorkspace(){
+  if($('inquiryCommunicationWorkspace'))return;
+  const detail=$('inquiryDetailContent');
+  const header=detail&&detail.querySelector('.inquiry-detail-header');
+  const form=$('inquiryForm');
+  const reply=document.querySelector('#inquiryDetailContent .inquiry-reply-section');
+  const messages=document.querySelector('#inquiryDetailContent .message-section');
+  if(!detail||!header||!form||!reply||!messages)return;
+
+  const modeBar=document.createElement('div');
+  modeBar.id='inquiryDetailModeBar';
+  modeBar.className='inquiry-detail-mode-bar';
+  modeBar.innerHTML='\
+    <button type="button" class="inquiry-detail-mode active" data-detail-mode="manage">管理情報</button>\
+    <button type="button" class="inquiry-detail-mode" data-detail-mode="reply">返信</button>\
+    <button type="button" class="inquiry-detail-mode" data-detail-mode="history">メール履歴 <span id="communicationMessageCount"></span></button>';
+  header.parentNode.insertBefore(modeBar,form);
+
+  const workspace=document.createElement('section');
+  workspace.id='inquiryCommunicationWorkspace';
+  workspace.className='inquiry-communication-workspace hidden';
+
+  const replyPanel=document.createElement('div');
+  replyPanel.className='inquiry-communication-panel';
+  replyPanel.dataset.communicationPanel='reply';
+  const historyPanel=document.createElement('div');
+  historyPanel.className='inquiry-communication-panel';
+  historyPanel.dataset.communicationPanel='history';
+
+  reply.parentNode.insertBefore(workspace,reply);
+  workspace.appendChild(replyPanel);
+  workspace.appendChild(historyPanel);
+  replyPanel.appendChild(reply);
+  historyPanel.appendChild(messages);
+
+  modeBar.onclick=function(e){
+    const button=e.target.closest('[data-detail-mode]');
+    if(!button)return;
+    setInquiryDetailMode(button.dataset.detailMode);
+  };
+}
+
+function setInquiryDetailMode(mode){
+  const detail=$('inquiryDetailContent');
+  const modeBar=$('inquiryDetailModeBar');
+  const form=$('inquiryForm');
+  const workspace=$('inquiryCommunicationWorkspace');
+  if(!detail||!modeBar||!form||!workspace)return;
+
+  modeBar.querySelectorAll('[data-detail-mode]').forEach(function(button){
+    button.classList.toggle('active',button.dataset.detailMode===mode);
+  });
+
+  if(mode==='manage'){
+    form.classList.remove('detail-mode-hidden');
+    workspace.classList.add('hidden');
+    return;
+  }
+
+  form.classList.add('detail-mode-hidden');
+  workspace.classList.remove('hidden');
+  workspace.querySelectorAll('[data-communication-panel]').forEach(function(panel){
+    panel.classList.toggle('active',panel.dataset.communicationPanel===mode);
+  });
+}
+
+function syncCommunicationMessageCount(){
+  const count=$('communicationMessageCount');
+  if(!count)return;
+  const id=String(inquiryState.selectedId||'');
+  if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id)){
+    count.textContent='';
+    return;
+  }
+  count.textContent='('+String((inquiryState.messagesByInquiry[id]||[]).length)+')';
+}
+
+function getLatestInboundMessageForReply(){
+  const id=String(inquiryState.selectedId||'');
+  if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))return null;
+  const messages=inquiryState.messagesByInquiry[id]||[];
+  for(let i=messages.length-1;i>=0;i-=1){
+    if(String(messages[i].direction||'INBOUND').toUpperCase()==='INBOUND')return messages[i];
+  }
+  return null;
+}
+
+function updateInquiryReplyUi(){
+  if(!$('inquiryReplyBody'))return;
+  const inquiry=findInquiry(inquiryState.selectedId);
+  const recipient=$('inquiryReplyRecipient');
+  const button=$('sendInquiryReplyButton');
+  const body=String($('inquiryReplyBody').value||'').trim();
+
+  if(!inquiry){
+    recipient.textContent='問い合わせを選択してください';
+    button.disabled=true;
+    return;
+  }
+  if(inquiryState.messageLoadingId===inquiry.id){
+    recipient.textContent='返信先を確認中...';
+    button.disabled=true;
+    return;
+  }
+  const inbound=getLatestInboundMessageForReply();
+  if(!inbound){
+    recipient.textContent='返信可能な受信メールがありません';
+    button.disabled=true;
+    return;
+  }
+  const to=String(inbound.fromEmail||inquiry.contactEmail||'');
+  recipient.textContent='宛先: '+(to||'不明');
+  button.disabled=!body||!to;
+}
+
+function clearReplyDraftForInquiryChange(){
+  if($('inquiryReplyBody'))$('inquiryReplyBody').value='';
+  if($('inquiryReplyStatus')){
+    $('inquiryReplyStatus').textContent='';
+    $('inquiryReplyStatus').className='reply-status';
+  }
+}
+
+function sendInquiryReplyFromScreen(){
+  const inquiry=findInquiry(inquiryState.selectedId);
+  const inbound=getLatestInboundMessageForReply();
+  if(!inquiry||!inbound)return;
+  const body=String($('inquiryReplyBody').value||'').trim();
+  if(!body)return;
+  const recipient=String(inbound.fromEmail||inquiry.contactEmail||'');
+  if(!window.confirm(recipient+' に返信を送信します。\n\n送信後は取り消せません。よろしいですか？'))return;
+
+  const button=$('sendInquiryReplyButton');
+  const status=$('inquiryReplyStatus');
+  button.disabled=true;
+  button.textContent='送信中...';
+  status.className='reply-status';
+  status.textContent='Gmailから返信しています...';
+
+  google.script.run
+    .withSuccessHandler(function(result){
+      button.textContent='返信を送信';
+      $('inquiryReplyBody').value='';
+      if(result&&Array.isArray(result.messages))inquiryState.messagesByInquiry[inquiry.id]=result.messages;
+      if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+      renderInquiryScreen();
+      status.className='reply-status success';
+      status.textContent='返信を送信しました。';
+      updateInquiryReplyUi();
+      syncCommunicationMessageCount();
+      setInquiryDetailMode('reply');
+      if(typeof loadDashboardData==='function')loadDashboardData(true);
+    })
+    .withFailureHandler(function(error){
+      button.textContent='返信を送信';
+      status.className='reply-status error';
+      status.textContent='送信に失敗しました。'+(error&&error.message?error.message:String(error));
+      updateInquiryReplyUi();
+    })
+    .sendInquiryReply({inquiryId:inquiry.id,body:body});
+}
+
+function installInquiryEnhancementStyles(){
+  if(document.getElementById('inquiryEnhancementStyles'))return;
+  const style=document.createElement('style');
+  style.id='inquiryEnhancementStyles';
+  style.textContent='\
+    .ai-summary-controls{display:flex;align-items:center;gap:8px;margin-top:-3px;min-height:26px}\
+    .ai-summary-controls .button{padding:5px 9px}\
+    .ai-summary-status{font-size:10px;color:#64748b;line-height:1.3}\
+    .ai-summary-status.success,.reply-status.success{color:#166534}\
+    .ai-summary-status.error,.reply-status.error{color:#b91c1c}\
+    .detail-mode-hidden{display:none!important}\
+    .inquiry-detail-mode-bar{display:flex;gap:4px;padding:6px 12px;background:#fff;border-bottom:1px solid #e2e8f0;flex:0 0 auto}\
+    .inquiry-detail-mode{border:0;background:transparent;padding:7px 10px;color:#64748b;font-weight:700;cursor:pointer;border-radius:7px}\
+    .inquiry-detail-mode:hover{background:#f1f5f9}\
+    .inquiry-detail-mode.active{background:#e8eefc;color:#1d4ed8}\
+    @media(min-width:761px){\
+      .inquiry-detail-pane{overflow:hidden!important}\
+      #inquiryDetailContent:not(.hidden){height:100%;min-height:0;display:flex!important;flex-direction:column}\
+      .inquiry-detail-header{flex:0 0 auto;padding:9px 14px 6px!important}\
+      .inquiry-detail-header h2{font-size:16px!important;margin:2px 0 2px!important;line-height:1.2!important;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}\
+      .detail-meta{font-size:10px!important}\
+      .match-badge{font-size:10px!important;padding:4px 7px!important}\
+      .inquiry-form{flex:1 1 auto;min-height:0;padding:7px 14px 7px!important;gap:5px!important;overflow:hidden}\
+      .inquiry-form label{gap:2px!important;font-size:10px!important}\
+      .inquiry-form input,.inquiry-form select{padding:5px 7px!important;min-height:29px!important;height:29px}\
+      .inquiry-form textarea{padding:5px 7px!important;min-height:32px!important;max-height:38px!important;resize:vertical}\
+      #inquirySummaryInput{min-height:30px!important;max-height:34px!important}\
+      #inquiryNextActionInput{min-height:32px!important;max-height:38px!important}\
+      .form-two-columns,.form-three-columns{gap:6px!important}\
+      .inquiry-actions{padding-top:3px!important;min-height:32px!important}\
+      .inquiry-actions .button{padding:5px 11px}\
+      .updated-label{font-size:9px!important}\
+      .inquiry-communication-workspace{flex:1 1 auto;min-height:0;overflow:hidden;background:#f8fafc}\
+      .inquiry-communication-panel{display:none;height:100%;min-height:0;overflow:auto}\
+      .inquiry-communication-panel.active{display:block}\
+      .inquiry-reply-section{margin:0!important;padding:14px 16px!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;min-height:100%}\
+      .inquiry-reply-heading{margin-bottom:7px!important}.inquiry-reply-heading>div{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}\
+      .reply-textarea{width:100%;min-height:120px;max-height:260px;resize:vertical;box-sizing:border-box}\
+      .reply-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:8px}.reply-status{font-size:11px;color:#64748b;min-height:16px}\
+      .message-section{padding:12px 16px 18px!important;min-height:100%;background:#f8fafc}\
+      .message-section>.section-heading{display:none}\
+      .message-list{gap:8px!important}\
+      .mail-card{padding:10px 12px!important}\
+      .mail-card-body{max-height:none!important}\
+    }\
+    @media(max-width:760px){\
+      .inquiry-detail-mode-bar{position:sticky;top:50px;z-index:4;padding:6px 8px}\
+      .inquiry-detail-mode{flex:1;padding:9px 5px}\
+      .inquiry-communication-workspace{min-height:0;background:#f8fafc}\
+      .inquiry-communication-panel{display:none}\
+      .inquiry-communication-panel.active{display:block}\
+      .inquiry-reply-section{margin:0!important;border-radius:0!important}\
+    }\
+  ';
+  document.head.appendChild(style);
+}
+
+const originalRenderInquiryDetail=window.renderInquiryDetail;
+window.renderInquiryDetail=function(){
+  originalRenderInquiryDetail();
+  ensureInquiryAiSummaryUi();
+  ensureInquiryReplyUi();
+  ensureInquiryCommunicationWorkspace();
+  updateInquiryReplyUi();
+  syncCommunicationMessageCount();
+};
+
+const originalSelectInquiry=window.selectInquiry;
+window.selectInquiry=function(id){
+  if(String(inquiryState.selectedId||'')!==String(id||'')){
+    clearReplyDraftForInquiryChange();
+    setInquiryDetailMode('manage');
+  }
+  originalSelectInquiry(id);
+  updateInquiryReplyUi();
+  syncCommunicationMessageCount();
+};
+
+$('navDashboard').onclick=function(){switchMainView('dashboard')};
+$('navInquiries').onclick=function(){switchMainView('inquiries')};
+$('navMasters').onclick=function(){switchMainView('masters')};
+$('refreshDashboard').onclick=function(){loadDashboardData(true)};
+$('dashboardRecent').onclick=function(e){const row=e.target.closest('[data-inquiry-id]');if(row)openDashboardInquiry(row.dataset.inquiryId)};
+
+installInquiryEnhancementStyles();
+ensureInquiryAiSummaryUi();
+ensureInquiryReplyUi();
+ensureInquiryCommunicationWorkspace();
+switchMainView('dashboard');
+</script>
+<!-- bundled from InquirySummaryDetailScript.html -->
+<script>
+(function(){
+  function ensureSummaryDetailFields(){
+    const detailInput=$('inquirySummaryInput');
+    if(!detailInput)return;
+    const detailLabel=detailInput.closest('label');
+    if(!detailLabel)return;
+
+    // 既存の「概要」入力欄はIDを維持したまま業務上の「詳細」として使う。
+    // NavigationScriptのAI要約機能との互換性を保つためIDは変更しない。
+    const firstText=Array.from(detailLabel.childNodes).find(function(node){return node.nodeType===Node.TEXT_NODE});
+    if(firstText)firstText.nodeValue='詳細';
+    detailInput.placeholder='問い合わせの経緯・要点・確認事項などの詳細';
+
+    if(!$('inquiryOverviewInput')){
+      const overviewLabel=document.createElement('label');
+      overviewLabel.className='inquiry-overview-field';
+      overviewLabel.innerHTML='概要<input id="inquiryOverviewInput" type="text" maxlength="200" placeholder="問い合わせを一覧で識別する短い概要">';
+      detailLabel.parentNode.insertBefore(overviewLabel,detailLabel);
+    }
+  }
+
+  function syncSummaryDetailAiLabels(){
+    const status=$('aiSummaryStatus');
+    if(status&&status.textContent.indexOf('概要候補')>=0)status.textContent='Geminiで詳細候補を作成します';
+  }
+
+  function applySummaryDetailToRenderedUi(){
+    ensureSummaryDetailFields();
+    const selected=findInquiry(inquiryState.selectedId);
+    if(selected){
+      if($('inquiryOverviewInput'))$('inquiryOverviewInput').value=selected.summary||selected.subject||'';
+      if($('inquirySummaryInput'))$('inquirySummaryInput').value=selected.detail||'';
+      if($('inquiryDetailSubject'))$('inquiryDetailSubject').textContent=selected.summary||selected.subject||'問い合わせ概要未設定';
+      if($('inquiryDetailMeta')){
+        const parts=[];
+        if(selected.receivedAt)parts.push('初回受信 '+formatLongDateTime(selected.receivedAt));
+        if(selected.contactEmail)parts.push(selected.contactEmail);
+        if(selected.subject)parts.push('メール件名: '+selected.subject);
+        $('inquiryDetailMeta').textContent=parts.join(' / ');
+      }
+    }
+
+    document.querySelectorAll('#inquiryRows [data-inquiry-id]').forEach(function(row){
+      const inquiry=findInquiry(row.dataset.inquiryId);
+      if(!inquiry)return;
+      const cells=row.children;
+      if(cells.length<3)return;
+      const primary=cells[2].querySelector('.inquiry-primary');
+      const secondary=cells[2].querySelector('.inquiry-secondary');
+      if(primary){
+        primary.innerHTML='<span class="priority-dot '+String(inquiry.priority||'MEDIUM').toLowerCase()+'"></span>'+escapeHtml(inquiry.summary||inquiry.subject||'問い合わせ概要未設定');
+      }
+      if(secondary){
+        secondary.textContent=inquiry.subject?'メール件名: '+inquiry.subject:(inquiry.category||'');
+      }
+    });
+    syncSummaryDetailAiLabels();
+  }
+
+  const baseRenderScreen=window.renderInquiryScreen;
+  window.renderInquiryScreen=function(){
+    baseRenderScreen();
+    applySummaryDetailToRenderedUi();
+  };
+
+  const baseRenderDetail=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    baseRenderDetail();
+    applySummaryDetailToRenderedUi();
+  };
+
+  window.getFilteredInquiries=function(){
+    if(!inquiryState.data)return[];
+    const q=String($('inquirySearch').value||'').trim().toLowerCase();
+    const status=$('inquiryStatusFilter').value;
+    const priority=$('inquiryPriorityFilter').value;
+    const unmatchedOnly=$('unmatchedOnly').checked;
+    return inquiryState.data.inquiries.filter(function(i){
+      const hay=[i.customerName,i.contactName,i.contactEmail,i.subject,i.summary,i.detail,i.category].join(' ').toLowerCase();
+      return(!q||hay.includes(q))&&(status==='all'||i.status===status)&&(priority==='all'||i.priority===priority)&&(!unmatchedOnly||['UNMATCHED','AMBIGUOUS'].includes(i.customerMatchStatus));
+    });
+  };
+
+  function saveInquiryWithSummaryDetail(e){
+    e.preventDefault();
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry)return;
+    $('saveInquiryButton').disabled=true;
+    $('inquiryFormMessage').textContent='保存中...';
+    google.script.run
+      .withSuccessHandler(function(data){
+        $('saveInquiryButton').disabled=false;
+        inquiryState.data=data;
+        $('inquiryFormMessage').textContent='保存しました。';
+        renderInquiryScreen();
+      })
+      .withFailureHandler(function(error){
+        $('saveInquiryButton').disabled=false;
+        $('inquiryFormMessage').textContent='保存に失敗しました。'+(error&&error.message?error.message:String(error));
+      })
+      .updateInquiry({
+        inquiryId:inquiry.id,
+        customerId:$('inquiryCustomerInput').value,
+        contactId:$('inquiryContactInput').value,
+        status:$('inquiryStatusInput').value,
+        priority:$('inquiryPriorityInput').value,
+        assignedMemberId:$('inquiryAssigneeInput').value,
+        category:$('inquiryCategoryInput').value,
+        dueDate:$('inquiryDueDateInput').value,
+        summary:String($('inquiryOverviewInput').value||'').trim()||inquiry.subject||'',
+        detail:$('inquirySummaryInput').value,
+        nextAction:$('inquiryNextActionInput').value
+      });
+  }
+
+  ensureSummaryDetailFields();
+  $('inquiryForm').onsubmit=saveInquiryWithSummaryDetail;
+  ['inquiryStatusFilter','inquiryPriorityFilter','unmatchedOnly'].forEach(function(id){$(id).onchange=renderInquiryScreen});
+  $('inquirySearch').oninput=renderInquiryScreen;
+
+  const style=document.createElement('style');
+  style.id='inquirySummaryDetailStyles';
+  style.textContent='\
+    .inquiry-overview-field input{font-weight:700}\
+    #generateInquiryReplyButton,#aiReplyStatus{display:none!important}\
+    @media(min-width:761px){#inquiryOverviewInput{height:29px!important;min-height:29px!important}#inquirySummaryInput{min-height:48px!important;max-height:82px!important}}\
+  ';
+  document.head.appendChild(style);
+})();
+</script>
+
+<!-- bundled from InquiryMailWorkspaceScript.html -->
+<script>
+(function(){
+  const replyInfoCache={};
+  const replyCcDirty={};
+  let replyInfoLoadingId='';
+
+  function getLatestInboundByTime(){
+    const id=String(inquiryState.selectedId||'');
+    if(!id||!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,id))return null;
+    return (inquiryState.messagesByInquiry[id]||[]).filter(function(message){
+      return String(message.direction||'INBOUND').toUpperCase()==='INBOUND';
+    }).sort(function(a,b){
+      return new Date(b.sentAt||0).getTime()-new Date(a.sentAt||0).getTime();
+    })[0]||null;
+  }
+  window.getLatestInboundMessageForReply=getLatestInboundByTime;
+
+  function ensureMailWorkspace(){
+    const modeBar=$('inquiryDetailModeBar');
+    const workspace=$('inquiryCommunicationWorkspace');
+    const messages=document.querySelector('#inquiryDetailContent .message-section');
+    if(!modeBar||!workspace||!messages)return;
+
+    modeBar.innerHTML='\
+      <button type="button" class="inquiry-detail-mode active" data-detail-mode="manage">管理情報</button>\
+      <button type="button" class="inquiry-detail-mode" data-detail-mode="mail">メール対応 <span id="communicationMessageCount"></span></button>';
+
+    workspace.innerHTML='';
+    const mailPanel=document.createElement('div');
+    mailPanel.className='inquiry-communication-panel inquiry-mail-workspace';
+    mailPanel.dataset.communicationPanel='mail';
+    mailPanel.innerHTML='\
+      <div class="mail-workspace-toolbar">\
+        <div><strong>メール履歴</strong><span>履歴を確認し、必要なときだけ返信画面を開きます</span></div>\
+        <button type="button" id="openInquiryReplyDialogButton" class="button primary">返信</button>\
+      </div>';
+    workspace.appendChild(mailPanel);
+    mailPanel.appendChild(messages);
+
+    modeBar.onclick=function(e){
+      const button=e.target.closest('[data-detail-mode]');
+      if(!button)return;
+      setInquiryDetailMode(button.dataset.detailMode);
+    };
+    $('openInquiryReplyDialogButton').onclick=openReplyDialog;
+  }
+
+  function ensureReplyDialog(){
+    if($('inquiryReplyDialog'))return;
+    const reply=document.querySelector('.inquiry-reply-section');
+    if(!reply)return;
+
+    const dialog=document.createElement('div');
+    dialog.id='inquiryReplyDialog';
+    dialog.className='inquiry-reply-dialog hidden';
+    dialog.innerHTML='\
+      <div class="inquiry-reply-dialog-backdrop" data-reply-dialog-close></div>\
+      <section class="inquiry-reply-dialog-card" role="dialog" aria-modal="true" aria-label="問い合わせ返信">\
+        <header class="inquiry-reply-dialog-header">\
+          <div><strong>返信</strong><span>メール履歴を確認しながら返信できます</span></div>\
+          <button type="button" class="reply-dialog-close" data-reply-dialog-close aria-label="閉じる">×</button>\
+        </header>\
+        <div class="inquiry-reply-dialog-body">\
+          <section class="reply-dialog-history">\
+            <div class="reply-dialog-column-title">メール履歴 <span id="replyDialogHistoryCount"></span></div>\
+            <div id="replyDialogHistory" class="message-list"></div>\
+          </section>\
+          <section id="replyDialogEditor" class="reply-dialog-editor"></section>\
+        </div>\
+      </section>';
+    document.body.appendChild(dialog);
+    $('replyDialogEditor').appendChild(reply);
+
+    let targetMeta=$('inquiryReplyTargetMeta');
+    if(!targetMeta){
+      targetMeta=document.createElement('div');
+      targetMeta.id='inquiryReplyTargetMeta';
+      targetMeta.className='reply-target-meta';
+      const heading=reply.querySelector('.inquiry-reply-heading');
+      if(heading)heading.insertAdjacentElement('afterend',targetMeta);
+    }
+
+    if(!$('inquiryReplyCc')){
+      const ccWrap=document.createElement('label');
+      ccWrap.className='reply-cc-field';
+      ccWrap.innerHTML='<span>CC</span><input id="inquiryReplyCc" type="text" placeholder="複数の場合はカンマ区切り">';
+      targetMeta.insertAdjacentElement('afterend',ccWrap);
+      $('inquiryReplyCc').oninput=function(){
+        const id=String(inquiryState.selectedId||'');
+        if(id)replyCcDirty[id]=true;
+      };
+    }
+
+    if(!$('generateReplyDialogAiButton')){
+      const actions=reply.querySelector('.reply-actions');
+      const ai=document.createElement('button');
+      ai.type='button';
+      ai.id='generateReplyDialogAiButton';
+      ai.className='button subtle';
+      ai.textContent='AI返信案';
+      actions.insertBefore(ai,actions.firstChild);
+      ai.onclick=function(){generateAiReplyCandidate(true)};
+    }
+
+    dialog.onclick=function(e){
+      if(e.target.closest('[data-reply-dialog-close]'))closeReplyDialog();
+    };
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape'&&!dialog.classList.contains('hidden'))closeReplyDialog();
+    });
+    $('sendInquiryReplyButton').onclick=sendInquiryReplyFromDialog;
+  }
+
+  function syncReplyDialogHistory(){
+    const target=$('replyDialogHistory');
+    const source=$('inquiryMessages');
+    if(!target||!source)return;
+    target.innerHTML=source.innerHTML;
+    const id=String(inquiryState.selectedId||'');
+    const messages=id&&inquiryState.messagesByInquiry[id]||[];
+    if($('replyDialogHistoryCount'))$('replyDialogHistoryCount').textContent='('+messages.length+')';
+  }
+
+  function openReplyDialog(){
+    ensureReplyDialog();
+    const dialog=$('inquiryReplyDialog');
+    if(!dialog)return;
+    syncReplyDialogHistory();
+    dialog.classList.remove('hidden');
+    document.body.classList.add('reply-dialog-open');
+    loadReplyInfoForSelectedInquiry(true);
+    updateInquiryReplyUi();
+    setTimeout(function(){if($('inquiryReplyBody'))$('inquiryReplyBody').focus()},0);
+  }
+
+  function closeReplyDialog(){
+    const dialog=$('inquiryReplyDialog');
+    if(dialog)dialog.classList.add('hidden');
+    document.body.classList.remove('reply-dialog-open');
+  }
+
+  window.setInquiryDetailMode=function(mode){
+    const modeBar=$('inquiryDetailModeBar');
+    const form=$('inquiryForm');
+    const workspace=$('inquiryCommunicationWorkspace');
+    if(!modeBar||!form||!workspace)return;
+    const resolved=mode==='manage'?'manage':'mail';
+    modeBar.querySelectorAll('[data-detail-mode]').forEach(function(button){
+      button.classList.toggle('active',button.dataset.detailMode===resolved);
+    });
+    if(resolved==='manage'){
+      form.classList.remove('detail-mode-hidden');
+      workspace.classList.add('hidden');
+    }else{
+      form.classList.add('detail-mode-hidden');
+      workspace.classList.remove('hidden');
+      const panel=workspace.querySelector('[data-communication-panel="mail"]');
+      if(panel)panel.classList.add('active');
+      loadReplyInfoForSelectedInquiry(false);
+    }
+  };
+
+  function ensureAiReplyButton(){
+    const controls=document.querySelector('.ai-summary-controls');
+    if(!controls||$('generateInquiryReplyButton'))return;
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='generateInquiryReplyButton';
+    button.className='button subtle';
+    button.textContent='AI返信案';
+    const status=document.createElement('span');
+    status.id='aiReplyStatus';
+    status.className='ai-reply-status';
+    controls.appendChild(button);
+    controls.appendChild(status);
+    button.onclick=function(){generateAiReplyCandidate(true)};
+  }
+
+  function selectedLabel(id){
+    const el=$(id);
+    if(!el||el.selectedIndex<0)return'';
+    const option=el.options[el.selectedIndex];
+    return option?String(option.textContent||''):'';
+  }
+
+  function generateAiReplyCandidate(openAfter){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry)return;
+    const managementButton=$('generateInquiryReplyButton');
+    const dialogButton=$('generateReplyDialogAiButton');
+    const status=$('aiReplyStatus');
+    [managementButton,dialogButton].forEach(function(button){if(button){button.disabled=true;button.textContent='作成中...'}});
+    if(status){status.className='ai-reply-status';status.textContent='管理情報とメール履歴から返信案を作成しています...'}
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        [managementButton,dialogButton].forEach(function(button){if(button){button.disabled=false;button.textContent='AI返信案'}});
+        const body=$('inquiryReplyBody');
+        if(body)body.value=result&&result.reply?result.reply:'';
+        if(status){status.className='ai-reply-status success';status.textContent='返信案を作成しました。内容を確認して送信してください。'}
+        if(openAfter)openReplyDialog();
+        updateInquiryReplyUi();
+        if(body)body.focus();
+      })
+      .withFailureHandler(function(error){
+        [managementButton,dialogButton].forEach(function(button){if(button){button.disabled=false;button.textContent='AI返信案'}});
+        if(status){status.className='ai-reply-status error';status.textContent='返信案の作成に失敗しました。'+(error&&error.message?error.message:String(error))}
+        if($('inquiryReplyStatus')){
+          $('inquiryReplyStatus').className='reply-status error';
+          $('inquiryReplyStatus').textContent='AI返信案の作成に失敗しました。';
+        }
+      })
+      .generateInquiryReplyCandidate({
+        inquiryId:inquiry.id,
+        customerName:selectedLabel('inquiryCustomerInput'),
+        contactName:selectedLabel('inquiryContactInput'),
+        status:selectedLabel('inquiryStatusInput'),
+        priority:selectedLabel('inquiryPriorityInput'),
+        assigneeName:selectedLabel('inquiryAssigneeInput'),
+        category:selectedLabel('inquiryCategoryInput'),
+        dueDate:$('inquiryDueDateInput').value,
+        summary:$('inquirySummaryInput').value,
+        nextAction:$('inquiryNextActionInput').value
+      });
+  }
+
+  function loadReplyInfoForSelectedInquiry(force){
+    const id=String(inquiryState.selectedId||'');
+    if(!id)return;
+    if(!force&&Object.prototype.hasOwnProperty.call(replyInfoCache,id)){
+      renderReplyInfo();
+      return;
+    }
+    if(replyInfoLoadingId===id)return;
+    replyInfoLoadingId=id;
+    renderReplyInfo();
+    google.script.run
+      .withSuccessHandler(function(info){
+        replyInfoLoadingId='';
+        replyInfoCache[id]=info||null;
+        if(String(inquiryState.selectedId||'')===id){
+          renderReplyInfo();
+          updateInquiryReplyUi();
+        }
+      })
+      .withFailureHandler(function(){
+        replyInfoLoadingId='';
+        replyInfoCache[id]=null;
+        if(String(inquiryState.selectedId||'')===id)renderReplyInfo();
+      })
+      .getInquiryReplyInfo(id);
+  }
+
+  function renderReplyInfo(){
+    const meta=$('inquiryReplyTargetMeta');
+    const recipient=$('inquiryReplyRecipient');
+    const cc=$('inquiryReplyCc');
+    const id=String(inquiryState.selectedId||'');
+    if(!meta)return;
+    if(!id){meta.textContent='';return}
+    if(replyInfoLoadingId===id){
+      meta.textContent='返信対象を確認中...';
+      if(recipient)recipient.textContent='宛先を確認中...';
+      return;
+    }
+    const info=replyInfoCache[id];
+    if(!info){
+      const inquiry=findInquiry(id);
+      const inbound=getLatestInboundByTime();
+      if(!inquiry||!inbound){meta.textContent='返信可能な受信メールがありません';return}
+      const fallback=String(inbound.fromEmail||inquiry.contactEmail||'不明');
+      if(recipient)recipient.textContent='To: '+fallback;
+      meta.innerHTML='<span><strong>返信対象</strong> '+escapeHtml(inbound.sentAt?formatLongDateTime(inbound.sentAt):'日時不明')+' / '+escapeHtml(inbound.subject||inquiry.subject||'(件名なし)')+'</span>';
+      return;
+    }
+    if(recipient)recipient.textContent='To: '+String(info.recipient||'不明');
+    meta.innerHTML='<span><strong>返信対象</strong> '+escapeHtml(info.sentAt?formatLongDateTime(info.sentAt):'日時不明')+' / '+escapeHtml(info.subject||'(件名なし)')+'</span>';
+    if(cc&&!replyCcDirty[id])cc.value=Array.isArray(info.cc)?info.cc.join(', '):String(info.cc||'');
+  }
+
+  const baseUpdateReplyUi=window.updateInquiryReplyUi;
+  window.updateInquiryReplyUi=function(){
+    if(typeof baseUpdateReplyUi==='function')baseUpdateReplyUi();
+    renderReplyInfo();
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const button=$('sendInquiryReplyButton');
+    const body=$('inquiryReplyBody')?String($('inquiryReplyBody').value||'').trim():'';
+    const id=String(inquiryState.selectedId||'');
+    const info=id?replyInfoCache[id]:null;
+    const inbound=getLatestInboundByTime();
+    const recipientValue=info&&info.recipient?String(info.recipient):String(inbound&&inbound.fromEmail||inquiry&&inquiry.contactEmail||'');
+    if(button)button.disabled=!inquiry||!body||!recipientValue||replyInfoLoadingId===id;
+  };
+
+  function sendInquiryReplyFromDialog(){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const inbound=getLatestInboundByTime();
+    if(!inquiry||!inbound)return;
+    const body=String($('inquiryReplyBody').value||'').trim();
+    if(!body)return;
+    const info=replyInfoCache[inquiry.id];
+    const recipient=String(info&&info.recipient||inbound.fromEmail||inquiry.contactEmail||'');
+    const cc=String($('inquiryReplyCc')&&$('inquiryReplyCc').value||'').trim();
+    const targetText=(info&&info.sentAt?formatLongDateTime(info.sentAt):formatLongDateTime(inbound.sentAt))+' / '+String(info&&info.subject||inbound.subject||inquiry.subject||'(件名なし)');
+    const ccText=cc?'\nCC: '+cc:'';
+    if(!window.confirm('To: '+recipient+ccText+'\n返信対象: '+targetText+'\n\n送信後は取り消せません。送信しますか？'))return;
+
+    const button=$('sendInquiryReplyButton');
+    const status=$('inquiryReplyStatus');
+    button.disabled=true;
+    button.textContent='送信中...';
+    status.className='reply-status';
+    status.textContent='Gmailから返信しています...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        button.textContent='返信を送信';
+        $('inquiryReplyBody').value='';
+        if($('inquiryReplyCc'))$('inquiryReplyCc').value='';
+        delete replyInfoCache[inquiry.id];
+        delete replyCcDirty[inquiry.id];
+        if(result&&Array.isArray(result.messages))inquiryState.messagesByInquiry[inquiry.id]=result.messages;
+        if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+        closeReplyDialog();
+        renderInquiryScreen();
+        setInquiryDetailMode('mail');
+        loadReplyInfoForSelectedInquiry(true);
+        syncCommunicationMessageCount();
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+      })
+      .withFailureHandler(function(error){
+        button.textContent='返信を送信';
+        status.className='reply-status error';
+        status.textContent='送信に失敗しました。'+(error&&error.message?error.message:String(error));
+        updateInquiryReplyUi();
+      })
+      .sendInquiryReply({inquiryId:inquiry.id,body:body,cc:cc});
+  }
+
+  function installMailWorkspaceStyles(){
+    if(document.getElementById('inquiryMailWorkspaceStyles'))return;
+    const style=document.createElement('style');
+    style.id='inquiryMailWorkspaceStyles';
+    style.textContent='\
+      .ai-reply-status{font-size:10px;color:#64748b;line-height:1.3}.ai-reply-status.success{color:#166534}.ai-reply-status.error{color:#b91c1c}\
+      .mail-workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;border-bottom:1px solid #e2e8f0;background:#fff;flex:0 0 auto}\
+      .mail-workspace-toolbar>div{display:flex;flex-direction:column;gap:2px}.mail-workspace-toolbar strong{font-size:13px}.mail-workspace-toolbar span{font-size:10px;color:#64748b}\
+      .reply-target-meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 8px;padding:7px 9px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;font-size:10px;color:#475569}.reply-target-meta strong{color:#334155}\
+      .reply-cc-field{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;font-size:11px;font-weight:700;color:#475569}.reply-cc-field input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:7px 9px;background:#fff}\
+      .inquiry-reply-dialog{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px}.inquiry-reply-dialog.hidden{display:none}.inquiry-reply-dialog-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.45)}\
+      .inquiry-reply-dialog-card{position:relative;width:min(1180px,94vw);height:min(760px,90vh);background:#fff;border-radius:12px;box-shadow:0 24px 60px rgba(15,23,42,.28);overflow:hidden;display:flex;flex-direction:column}\
+      .inquiry-reply-dialog-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #e2e8f0;background:#fff}.inquiry-reply-dialog-header>div{display:flex;align-items:baseline;gap:10px}.inquiry-reply-dialog-header strong{font-size:16px}.inquiry-reply-dialog-header span{font-size:11px;color:#64748b}.reply-dialog-close{border:0;background:transparent;font-size:26px;line-height:1;color:#64748b;cursor:pointer;padding:2px 6px}\
+      .inquiry-reply-dialog-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr)}.reply-dialog-history{min-width:0;min-height:0;overflow-y:auto;padding:12px 14px;background:#f8fafc;border-right:1px solid #e2e8f0}.reply-dialog-column-title{font-size:12px;font-weight:700;color:#475569;margin-bottom:8px}.reply-dialog-editor{min-width:0;min-height:0;overflow-y:auto;background:#fff}\
+      .reply-dialog-editor .inquiry-reply-section{margin:0!important;padding:14px 16px!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;min-height:100%;box-sizing:border-box}.reply-dialog-editor .reply-textarea{width:100%;min-height:230px;max-height:430px;resize:vertical;box-sizing:border-box}.reply-dialog-editor .reply-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:8px}.reply-dialog-editor .reply-status{margin-right:auto}\
+      body.reply-dialog-open{overflow:hidden}\
+      @media(min-width:761px){.inquiry-mail-workspace{display:flex!important;flex-direction:column;height:100%;min-height:0;overflow:hidden!important}.inquiry-mail-workspace .message-section{flex:1 1 auto;min-height:0!important;overflow-y:auto!important;padding:10px 14px 18px!important}.inquiry-mail-workspace .message-section>.section-heading{display:none!important}}\
+      @media(max-width:760px){.inquiry-reply-dialog{padding:0}.inquiry-reply-dialog-card{width:100vw;height:100vh;border-radius:0}.inquiry-reply-dialog-body{display:flex;flex-direction:column}.reply-dialog-history{flex:1 1 45%;border-right:0;border-bottom:1px solid #e2e8f0}.reply-dialog-editor{flex:1 1 55%}.reply-dialog-editor .reply-textarea{min-height:140px}.inquiry-reply-dialog-header span{display:none}}\
+    ';
+    document.head.appendChild(style);
+  }
+
+  const baseRenderMessages=window.renderInquiryMessages;
+  window.renderInquiryMessages=function(messages){
+    baseRenderMessages(messages);
+    if($('inquiryReplyDialog')&&!$('inquiryReplyDialog').classList.contains('hidden'))syncReplyDialogHistory();
+  };
+
+  const previousRender=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    previousRender();
+    ensureMailWorkspace();
+    ensureReplyDialog();
+    ensureAiReplyButton();
+    updateInquiryReplyUi();
+    syncCommunicationMessageCount();
+  };
+
+  const previousSelect=window.selectInquiry;
+  window.selectInquiry=function(id){
+    const oldId=String(inquiryState.selectedId||'');
+    const changed=oldId!==String(id||'');
+    if(changed)closeReplyDialog();
+    previousSelect(id);
+    if(changed&&oldId){delete replyCcDirty[oldId]}
+    if(changed&&$('aiReplyStatus'))$('aiReplyStatus').textContent='';
+  };
+
+  installMailWorkspaceStyles();
+  ensureReplyDialog();
+  ensureMailWorkspace();
+  ensureAiReplyButton();
+})();
+</script>
+
+<!-- bundled from InquiryCustomerRegistrationScript.html -->
+<script>
+(function(){
+  function normalizeDomainClient(value){
+    return String(value||'').trim().toLowerCase().replace(/^@/,'');
+  }
+
+  function domainFromEmail(value){
+    const email=String(value||'').trim().toLowerCase();
+    const at=email.lastIndexOf('@');
+    return at>0&&at<email.length-1?normalizeDomainClient(email.slice(at+1)):'';
+  }
+
+  function customerForInquiry(inquiry){
+    return (inquiryState.data&&inquiryState.data.customers||[]).find(function(c){return c.id===inquiry.customerId})||null;
+  }
+
+  function inboundEmailsForInquiry(inquiryId){
+    const messages=inquiryState.messagesByInquiry[inquiryId]||[];
+    const seen={};
+    return messages.filter(function(m){return String(m.direction||'INBOUND').toUpperCase()==='INBOUND'})
+      .map(function(m){return String(m.fromEmail||'').trim().toLowerCase()})
+      .filter(function(email){if(!email||seen[email])return false;seen[email]=true;return true});
+  }
+
+  function emailMatchesDomain(email,domain){
+    const d=domainFromEmail(email);
+    const base=normalizeDomainClient(domain);
+    return !!d&&!!base&&(d===base||d.endsWith('.'+base));
+  }
+
+  /**
+   * 顧客判定・登録操作はフォーム内へ差し込まず、管理情報/メール対応タブと同じ行の右側へ置く。
+   * 表示有無で管理情報フォーム全体が上下にずれないようにする。
+   */
+  function ensureClassificationPanel(){
+    const modeBar=$('inquiryDetailModeBar');
+    if(!modeBar)return null;
+    let panel=$('inquiryClassificationAssist');
+    if(panel&&panel.parentNode!==modeBar)panel.remove();
+    if(!panel){
+      panel=document.createElement('section');
+      panel.id='inquiryClassificationAssist';
+      panel.className='inquiry-classification-assist hidden';
+    }
+    modeBar.appendChild(panel);
+    return panel;
+  }
+
+  function renderClassificationPanel(){
+    const panel=ensureClassificationPanel();
+    if(!panel)return;
+    const inquiry=findInquiry(inquiryState.selectedId);
+    if(!inquiry){panel.classList.add('hidden');panel.innerHTML='';return}
+
+    const emails=inboundEmailsForInquiry(inquiry.id);
+    if(!Object.prototype.hasOwnProperty.call(inquiryState.messagesByInquiry,inquiry.id)){
+      panel.classList.remove('hidden');
+      panel.innerHTML='<span class="classification-assist-status"><span>顧客判定を確認中...</span></span>';
+      return;
+    }
+
+    if(!inquiry.customerId){
+      const domain=emails.map(domainFromEmail).find(Boolean)||'';
+      panel.classList.remove('hidden');
+      panel.innerHTML='\
+        <span class="classification-assist-status">\
+          <span>送信元: '+(domain?escapeHtml(domain):'ドメイン不明')+'</span>\
+        </span>\
+        <button type="button" class="button primary classification-register-button" data-register-inquiry-customer '+(!domain?'disabled':'')+'>＋ 顧客登録</button>';
+      panel.dataset.detectedDomain=domain;
+      return;
+    }
+
+    if(!inquiry.contactId){
+      const customer=customerForInquiry(inquiry);
+      const domain=customer&&customer.domain||'';
+      const candidates=emails.filter(function(email){return emailMatchesDomain(email,domain)});
+      panel.classList.remove('hidden');
+      panel.innerHTML='\
+        <span class="classification-assist-status">\
+          <span>'+(domain?'顧客ドメイン: '+escapeHtml(domain):'顧客ドメイン未設定')+'</span>\
+        </span>\
+        <button type="button" class="button primary classification-register-button" data-register-inquiry-contact '+(!candidates.length?'disabled':'')+'>＋ 担当者登録</button>';
+      panel.dataset.contactCandidates=JSON.stringify(candidates);
+      return;
+    }
+
+    panel.classList.add('hidden');
+    panel.innerHTML='';
+  }
+
+  function ensureDialog(){
+    if($('inquiryClassificationDialog'))return;
+    const overlay=document.createElement('div');
+    overlay.id='inquiryClassificationDialog';
+    overlay.className='classification-dialog-overlay hidden';
+    overlay.innerHTML='\
+      <div class="classification-dialog" role="dialog" aria-modal="true">\
+        <div class="classification-dialog-header"><div><div class="panel-kicker">問い合わせからマスタ登録</div><h3 id="classificationDialogTitle"></h3></div><button type="button" class="classification-dialog-close">×</button></div>\
+        <div id="classificationDialogBody" class="classification-dialog-body"></div>\
+        <div id="classificationDialogStatus" class="form-message classification-dialog-status"></div>\
+        <div class="classification-dialog-actions"><button type="button" class="button subtle" data-classification-cancel>キャンセル</button><button type="button" id="classificationDialogSubmit" class="button primary">登録</button></div>\
+      </div>';
+    document.body.appendChild(overlay);
+    overlay.querySelector('.classification-dialog-close').onclick=closeDialog;
+    overlay.querySelector('[data-classification-cancel]').onclick=closeDialog;
+    overlay.onclick=function(e){if(e.target===overlay)closeDialog()};
+  }
+
+  let dialogMode='';
+  function closeDialog(){
+    const dialog=$('inquiryClassificationDialog');
+    if(dialog)dialog.classList.add('hidden');
+    dialogMode='';
+  }
+
+  function openCustomerDialog(domain){
+    ensureDialog();
+    dialogMode='customer';
+    $('classificationDialogTitle').textContent='顧客として登録';
+    $('classificationDialogBody').innerHTML='\
+      <label>顧客名 <span class="required">*</span><input id="classificationCustomerName" type="text" maxlength="200" placeholder="株式会社○○"></label>\
+      <label>ドメイン<input id="classificationDomain" type="text" readonly value="'+escapeAttr(domain)+'"></label>\
+      <div class="setting-help">登録後、この問い合わせにも顧客を設定します。</div>';
+    $('classificationDialogStatus').textContent='';
+    $('classificationDialogSubmit').disabled=false;
+    $('classificationDialogSubmit').textContent='登録';
+    $('classificationDialogSubmit').onclick=submitCustomer;
+    $('inquiryClassificationDialog').classList.remove('hidden');
+    setTimeout(function(){$('classificationCustomerName').focus()},0);
+  }
+
+  function openContactDialog(candidates){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const customer=customerForInquiry(inquiry);
+    ensureDialog();
+    dialogMode='contact';
+    $('classificationDialogTitle').textContent='顧客担当者として登録';
+    $('classificationDialogBody').innerHTML='\
+      <div class="setting-help">顧客「'+escapeHtml(customer&&customer.name||'')+'」のドメインと一致する受信メールだけを候補にしています。</div>\
+      <label>メールアドレス<select id="classificationContactEmail">'+candidates.map(function(email){return '<option value="'+escapeAttr(email)+'">'+escapeHtml(email)+'</option>'}).join('')+'</select></label>\
+      <label>担当者名<input id="classificationContactName" type="text" maxlength="200" placeholder="氏名（未入力でも登録可）"></label>';
+    $('classificationDialogStatus').textContent='';
+    $('classificationDialogSubmit').disabled=false;
+    $('classificationDialogSubmit').textContent='登録';
+    $('classificationDialogSubmit').onclick=submitContact;
+    $('inquiryClassificationDialog').classList.remove('hidden');
+    setTimeout(function(){$('classificationContactName').focus()},0);
+  }
+
+  function submitCustomer(){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const name=String($('classificationCustomerName').value||'').trim();
+    const domain=String($('classificationDomain').value||'').trim();
+    if(!name){$('classificationDialogStatus').textContent='顧客名を入力してください。';return}
+    setDialogBusy('顧客を登録しています...');
+    google.script.run.withSuccessHandler(function(result){
+      finishAction(result&&result.inquiryData,'顧客「'+name+'」を登録し、この問い合わせへ設定しました。');
+    }).withFailureHandler(dialogFailure).registerCustomerFromInquiry({inquiryId:inquiry.id,customerName:name,domain:domain});
+  }
+
+  function submitContact(){
+    const inquiry=findInquiry(inquiryState.selectedId);
+    const email=$('classificationContactEmail').value;
+    const name=String($('classificationContactName').value||'').trim();
+    setDialogBusy('顧客担当者を登録しています...');
+    google.script.run.withSuccessHandler(function(result){
+      finishAction(result&&result.inquiryData,'顧客担当者 '+email+' を登録し、この問い合わせへ設定しました。');
+    }).withFailureHandler(dialogFailure).registerContactFromInquiry({inquiryId:inquiry.id,email:email,contactName:name});
+  }
+
+  function setDialogBusy(text){
+    $('classificationDialogSubmit').disabled=true;
+    $('classificationDialogSubmit').textContent='処理中...';
+    $('classificationDialogStatus').textContent=text;
+  }
+
+  function dialogFailure(error){
+    $('classificationDialogSubmit').disabled=false;
+    $('classificationDialogSubmit').textContent='登録';
+    $('classificationDialogStatus').textContent='処理に失敗しました。'+(error&&error.message?error.message:String(error));
+  }
+
+  function finishAction(data,message){
+    if(data)inquiryState.data=data;
+    if(typeof masterState!=='undefined')masterState.data=null;
+    closeDialog();
+    renderInquiryScreen();
+    if(typeof setInquiryDetailMode==='function')setInquiryDetailMode('manage');
+    if(typeof loadDashboardData==='function')loadDashboardData(true);
+    window.alert(message);
+  }
+
+  const baseRenderDetail=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    baseRenderDetail();
+    renderClassificationPanel();
+  };
+
+  document.addEventListener('click',function(e){
+    const customerButton=e.target.closest('[data-register-inquiry-customer]');
+    if(customerButton){e.preventDefault();openCustomerDialog(String($('inquiryClassificationAssist').dataset.detectedDomain||''));return}
+    const contactButton=e.target.closest('[data-register-inquiry-contact]');
+    if(contactButton){
+      e.preventDefault();
+      let candidates=[];
+      try{candidates=JSON.parse($('inquiryClassificationAssist').dataset.contactCandidates||'[]')}catch(_e){}
+      if(candidates.length)openContactDialog(candidates);
+    }
+  });
+
+  const style=document.createElement('style');
+  style.id='inquiryClassificationAssistStyles';
+  style.textContent='\
+    .inquiry-classification-assist{margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0;max-width:55%;height:28px}.inquiry-classification-assist.hidden{visibility:hidden;display:flex}.classification-assist-status{display:flex;align-items:baseline;gap:6px;min-width:0;padding:3px 7px;border:1px solid #dbe3ee;background:#f8fafc;border-radius:7px;white-space:nowrap}.classification-assist-status span{font-size:9px;color:#475569;overflow:hidden;text-overflow:ellipsis}.inquiry-classification-assist .classification-register-button{padding:5px 10px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 1px 2px rgba(15,23,42,.12)}.classification-dialog-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1200}.classification-dialog-overlay.hidden{display:none}.classification-dialog{width:min(520px,100%);background:#fff;border-radius:12px;box-shadow:0 24px 70px rgba(15,23,42,.25);overflow:hidden}.classification-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px 10px;border-bottom:1px solid #e2e8f0}.classification-dialog-header h3{margin:2px 0 0;font-size:18px}.classification-dialog-close{border:0;background:transparent;font-size:24px;color:#64748b;cursor:pointer}.classification-dialog-body{padding:16px 18px;display:grid;gap:12px}.classification-dialog-body label{display:grid;gap:5px;font-size:12px;font-weight:700;color:#334155}.classification-dialog-body input,.classification-dialog-body select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:7px}.classification-dialog-body input[readonly]{background:#f8fafc}.classification-dialog-status{padding:0 18px}.classification-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #e2e8f0}@media(max-width:760px){.inquiry-classification-assist{max-width:48%;gap:4px}.classification-assist-status{display:none}.inquiry-classification-assist .classification-register-button{padding:6px 8px;font-size:9px}.classification-dialog-overlay{padding:0;align-items:stretch}.classification-dialog{width:100%;border-radius:0}}\
+  ';
+  document.head.appendChild(style);
+})();
+</script>
+
+<!-- bundled from InquiryBulkExclusionScript.html -->
+<script>
+(function(){
+  const selectedForExclusion=new Set();
+
+  function ensureBulkActionButton(){
+    if($('excludeSelectedInquiriesButton'))return $('excludeSelectedInquiriesButton');
+    const toolbar=document.querySelector('#inquiryView .toolbar-right');
+    if(!toolbar)return null;
+    const button=document.createElement('button');
+    button.id='excludeSelectedInquiriesButton';
+    button.type='button';
+    button.className='button subtle inquiry-bulk-exclude-button';
+    button.disabled=true;
+    button.textContent='選択を対象外';
+    button.onclick=excludeSelectedInquiries;
+    toolbar.insertBefore(button,toolbar.firstChild);
+    return button;
+  }
+
+  function eligibleVisibleInquiries(){
+    return getFilteredInquiries().filter(function(inquiry){return !inquiry.customerId});
+  }
+
+  function syncBulkButton(){
+    const button=ensureBulkActionButton();
+    if(!button)return;
+    const count=selectedForExclusion.size;
+    button.disabled=count===0;
+    button.textContent=count?'選択を対象外 ('+count+')':'選択を対象外';
+  }
+
+  function decorateHeader(){
+    const header=document.querySelector('.inquiry-list-header.inquiry-row-grid');
+    if(!header||!header.children.length)return;
+    const cell=header.children[0];
+    if(cell.querySelector('#selectAllExcludeCandidates'))return;
+    const label=document.createElement('label');
+    label.className='inquiry-bulk-select-header';
+    label.innerHTML='<input id="selectAllExcludeCandidates" type="checkbox" aria-label="表示中の顧客未特定問い合わせをすべて選択"><span>受信</span>';
+    cell.textContent='';
+    cell.appendChild(label);
+    $('selectAllExcludeCandidates').onchange=function(e){
+      const checked=e.target.checked;
+      eligibleVisibleInquiries().forEach(function(inquiry){
+        if(checked)selectedForExclusion.add(inquiry.id);
+        else selectedForExclusion.delete(inquiry.id);
+      });
+      renderInquiryScreen();
+    };
+  }
+
+  function decorateRows(){
+    document.querySelectorAll('#inquiryRows [data-inquiry-id]').forEach(function(row){
+      const inquiry=findInquiry(row.dataset.inquiryId);
+      if(!inquiry||inquiry.customerId||!row.children.length)return;
+      const cell=row.children[0];
+      if(cell.querySelector('[data-exclusion-select]'))return;
+      const wrap=document.createElement('label');
+      wrap.className='inquiry-bulk-select';
+      wrap.title='問い合わせ対象外候補として選択';
+      const checkbox=document.createElement('input');
+      checkbox.type='checkbox';
+      checkbox.dataset.exclusionSelect=inquiry.id;
+      checkbox.checked=selectedForExclusion.has(inquiry.id);
+      checkbox.setAttribute('aria-label','対象外候補として選択');
+      wrap.appendChild(checkbox);
+      cell.insertBefore(wrap,cell.firstChild);
+    });
+
+    const eligible=eligibleVisibleInquiries();
+    const all=eligible.length>0&&eligible.every(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+    const some=eligible.some(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+    const selectAll=$('selectAllExcludeCandidates');
+    if(selectAll){
+      selectAll.checked=all;
+      selectAll.indeterminate=!all&&some;
+      selectAll.disabled=eligible.length===0;
+    }
+    syncBulkButton();
+  }
+
+  function removeDetailExcludeAction(){
+    const button=document.querySelector('[data-exclude-inquiry-domain]');
+    if(button)button.remove();
+  }
+
+  function pruneSelection(){
+    if(!inquiryState.data)return;
+    const valid={};
+    inquiryState.data.inquiries.forEach(function(inquiry){
+      if(!inquiry.customerId)valid[inquiry.id]=true;
+    });
+    Array.from(selectedForExclusion).forEach(function(id){
+      if(!valid[id])selectedForExclusion.delete(id);
+    });
+  }
+
+  function applyBulkExclusionUi(){
+    pruneSelection();
+    ensureBulkActionButton();
+    decorateHeader();
+    decorateRows();
+    removeDetailExcludeAction();
+  }
+
+  const baseRenderScreen=window.renderInquiryScreen;
+  window.renderInquiryScreen=function(){
+    baseRenderScreen();
+    applyBulkExclusionUi();
+  };
+
+  const baseRenderDetail=window.renderInquiryDetail;
+  window.renderInquiryDetail=function(){
+    baseRenderDetail();
+    removeDetailExcludeAction();
+  };
+
+  const rows=$('inquiryRows');
+  if(rows){
+    rows.addEventListener('click',function(e){
+      const checkbox=e.target.closest('[data-exclusion-select]');
+      if(!checkbox)return;
+      e.stopPropagation();
+      const id=String(checkbox.dataset.exclusionSelect||'');
+      if(checkbox.checked)selectedForExclusion.add(id);
+      else selectedForExclusion.delete(id);
+      syncBulkButton();
+      const eligible=eligibleVisibleInquiries();
+      const selectAll=$('selectAllExcludeCandidates');
+      if(selectAll){
+        const all=eligible.length>0&&eligible.every(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+        const some=eligible.some(function(inquiry){return selectedForExclusion.has(inquiry.id)});
+        selectAll.checked=all;
+        selectAll.indeterminate=!all&&some;
+      }
+    },true);
+  }
+
+  function excludeSelectedInquiries(){
+    const ids=Array.from(selectedForExclusion);
+    if(!ids.length)return;
+    const confirmed=window.confirm(
+      '選択した '+ids.length+' 件の送信元ドメインを、問い合わせ対象外として登録します。\n\n'+
+      '登録したドメインから開始した問い合わせは、既存分も含めて一覧・ダッシュボードから非表示になります。\n'+
+      '登録していない別ドメインには影響しません。データ自体は削除されません。続けますか？'
+    );
+    if(!confirmed)return;
+
+    const button=ensureBulkActionButton();
+    button.disabled=true;
+    button.textContent='対象外登録中...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        if(result&&result.inquiryData)inquiryState.data=result.inquiryData;
+        selectedForExclusion.clear();
+        if(!findInquiry(inquiryState.selectedId))inquiryState.selectedId=null;
+        if(typeof masterState!=='undefined')masterState.data=null;
+        renderInquiryScreen();
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+        const domains=result&&Array.isArray(result.domains)?result.domains:[];
+        const skipped=result&&Array.isArray(result.skipped)?result.skipped:[];
+        let message=domains.length+'ドメインを問い合わせ対象外に登録しました。';
+        if(skipped.length)message+='\n'+skipped.length+'件は顧客特定済み等の理由で対象外登録しませんでした。';
+        window.alert(message);
+      })
+      .withFailureHandler(function(error){
+        syncBulkButton();
+        window.alert('対象外登録に失敗しました。 '+(error&&error.message?error.message:String(error)));
+      })
+      .excludeInquiryDomainsBulk({inquiryIds:ids});
+  }
+
+  const style=document.createElement('style');
+  style.id='inquiryBulkExclusionStyles';
+  style.textContent='\
+    .inquiry-bulk-select-header{display:flex;align-items:center;gap:6px;cursor:pointer}.inquiry-bulk-select-header input{margin:0}.inquiry-bulk-select{display:inline-flex;align-items:center;margin-right:6px;vertical-align:middle;cursor:pointer}.inquiry-bulk-select input{margin:0;width:14px;height:14px}.inquiry-row-grid>div:first-child{display:flex;align-items:center}.inquiry-bulk-exclude-button:not(:disabled){color:#b91c1c;border-color:#fecaca;background:#fff7f7}.inquiry-bulk-exclude-button:not(:disabled):hover{background:#fee2e2}@media(max-width:760px){.inquiry-bulk-exclude-button{order:-1}}\
+  ';
+  document.head.appendChild(style);
+
+  applyBulkExclusionUi();
+})();
+</script>
+
+<!-- bundled from InquiryImportScript.html -->
+<script>
+(function(){
+  function ensureManualImportButton(){
+    if($('manualInquiryImportButton'))return $('manualInquiryImportButton');
+    const toolbar=document.querySelector('#inquiryView .toolbar-right');
+    if(!toolbar)return null;
+    const button=document.createElement('button');
+    button.id='manualInquiryImportButton';
+    button.type='button';
+    button.className='button subtle';
+    button.textContent='メール取込';
+    button.title='Gmailから問い合わせメールを今すぐ取り込みます';
+    button.onclick=runManualInquiryImport;
+    toolbar.appendChild(button);
+    return button;
+  }
+
+  function runManualInquiryImport(){
+    const button=ensureManualImportButton();
+    if(!button||button.disabled)return;
+    button.disabled=true;
+    button.textContent='取込中...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        button.disabled=false;
+        button.textContent='メール取込';
+
+        if(result&&result.reason==='LOCKED'){
+          window.alert('別のメール取込処理が実行中です。少し待ってから再度お試しください。');
+          return;
+        }
+
+        inquiryState.messagesByInquiry={};
+        inquiryState.messageLoadingId=null;
+        inquiryState.data=null;
+        loadInquiryData(true);
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+
+        const imported=Number(result&&result.imported||0);
+        const skipped=Number(result&&result.skipped||0);
+        const errors=Number(result&&result.errors||0);
+        let message='メール取込が完了しました。\n新規取込: '+imported+'件';
+        if(skipped)message+='\n取込済み・対象外等: '+skipped+'件';
+        if(errors)message+='\nエラー: '+errors+'件';
+        if(imported===0&&!errors)message+='\n新しく取り込むメールはありませんでした。';
+        window.alert(message);
+      })
+      .withFailureHandler(function(error){
+        button.disabled=false;
+        button.textContent='メール取込';
+        window.alert('メール取込に失敗しました。 '+(error&&error.message?error.message:String(error)));
+      })
+      .importInquiryEmails({force:true});
+  }
+
+  ensureManualImportButton();
+})();
+</script>
+
+<!-- bundled from InquiryReassessScript.html -->
+<script>
+(function(){
+  const button=$('reassessUnmatchedInquiries');
+  if(!button)return;
+
+  button.onclick=function(){
+    const data=inquiryState.data||{inquiries:[]};
+    const unmatched=(data.inquiries||[]).filter(function(inquiry){
+      return inquiry.customerMatchStatus==='UNMATCHED'||inquiry.customerMatchStatus==='AMBIGUOUS';
+    }).length;
+
+    if(!unmatched){
+      window.alert('再判定が必要な問い合わせはありません。');
+      return;
+    }
+    if(!window.confirm('顧客未特定・候補複数の問い合わせ '+unmatched+'件を、現在の顧客・担当者マスタで再判定します。よろしいですか？'))return;
+
+    button.disabled=true;
+    const originalText=button.textContent;
+    button.textContent='再判定中...';
+
+    google.script.run
+      .withSuccessHandler(function(result){
+        button.disabled=false;
+        button.textContent=originalText;
+        if(result&&result.data)inquiryState.data=result.data;
+        renderInquiryScreen();
+        if(typeof loadDashboardData==='function')loadDashboardData(true);
+        const checked=Number(result&&result.checked||0);
+        const matched=Number(result&&result.matched||0);
+        const remaining=Number(result&&result.remaining||0);
+        window.alert('再判定しました。\n対象: '+checked+'件\n自動特定: '+matched+'件\n未特定のまま: '+remaining+'件');
+      })
+      .withFailureHandler(function(error){
+        button.disabled=false;
+        button.textContent=originalText;
+        window.alert('顧客の再判定に失敗しました。\n'+(error&&error.message?error.message:String(error)));
+      })
+      .reassessUnmatchedInquiriesV2();
+  };
+})();
+</script>
+
+<!-- bundled from MobileScript.html -->
+<script>
+(function(){
+  const mobileQuery=window.matchMedia('(max-width:760px)');
+
+  function ensureInquiryBackButton(){
+    if($('mobileInquiryBack'))return;
+    const pane=$('inquiryDetail');
+    if(!pane)return;
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='mobileInquiryBack';
+    button.className='mobile-detail-back';
+    button.textContent='← 問い合わせ一覧へ戻る';
+    button.onclick=function(){
+      $('inquiryView').classList.remove('mobile-detail-open');
+    };
+    pane.insertBefore(button,pane.firstChild);
+  }
+
+  function ensureMasterBackButton(){
+    if($('mobileMasterBack'))return;
+    const pane=document.querySelector('.master-editor-pane');
+    if(!pane)return;
+    const button=document.createElement('button');
+    button.type='button';
+    button.id='mobileMasterBack';
+    button.className='mobile-master-back';
+    button.textContent='← マスタ一覧へ戻る';
+    button.onclick=function(){pane.classList.remove('mobile-editor-open')};
+    pane.insertBefore(button,pane.firstChild);
+  }
+
+  function syncInquiryMobileDetail(){
+    if(!mobileQuery.matches){
+      $('inquiryView').classList.remove('mobile-detail-open');
+      return;
+    }
+    if(inquiryState&&inquiryState.selectedId)$('inquiryView').classList.add('mobile-detail-open');
+  }
+
+  ensureInquiryBackButton();
+  ensureMasterBackButton();
+
+  const previousSelectInquiry=window.selectInquiry;
+  window.selectInquiry=function(id){
+    previousSelectInquiry(id);
+    if(mobileQuery.matches)$('inquiryView').classList.add('mobile-detail-open');
+  };
+
+  const previousOpenDashboardInquiry=window.openDashboardInquiry;
+  window.openDashboardInquiry=function(id){
+    previousOpenDashboardInquiry(id);
+    if(mobileQuery.matches){
+      const wait=setInterval(function(){
+        if(inquiryState&&inquiryState.selectedId===id){
+          clearInterval(wait);
+          $('inquiryView').classList.add('mobile-detail-open');
+        }
+      },80);
+      setTimeout(function(){clearInterval(wait)},5000);
+    }
+  };
+
+  const masterRows=$('masterRows');
+  if(masterRows){
+    masterRows.addEventListener('click',function(){
+      if(mobileQuery.matches){
+        setTimeout(function(){
+          const pane=document.querySelector('.master-editor-pane');
+          const form=$('masterForm');
+          if(pane&&form&&!form.classList.contains('hidden'))pane.classList.add('mobile-editor-open');
+        },0);
+      }
+    });
+  }
+
+  const newMasterButton=$('newMasterButton');
+  if(newMasterButton){
+    newMasterButton.addEventListener('click',function(){
+      if(mobileQuery.matches){
+        setTimeout(function(){
+          const pane=document.querySelector('.master-editor-pane');
+          if(pane)pane.classList.add('mobile-editor-open');
+        },0);
+      }
+    });
+  }
+
+  mobileQuery.addEventListener('change',function(){
+    syncInquiryMobileDetail();
+    if(!mobileQuery.matches){
+      const pane=document.querySelector('.master-editor-pane');
+      if(pane)pane.classList.remove('mobile-editor-open');
+    }
+  });
+})();
+</script>
+
+<!-- bundled from UserMasterScript.html -->
+<script>
+(function(){
+  const tab=document.getElementById('usersMasterTab');
+  const importButton=document.getElementById('importMembersAsUsersButton');
+
+  // 初期管理者が未登録でもメニュー自体を見せ、原因を分かるようにする。
+  // データ取得・登録はサーバーAPIのADMIN権限検証で必ず制限する。
+  if(tab)tab.classList.remove('hidden');
+  google.script.run
+    .withSuccessHandler(function(identity){
+      if(!tab)return;
+      tab.title=identity&&identity.role==='ADMIN'?'ユーザマスタを管理できます':
+        !identity||!identity.emailAvailable?'ユーザー識別不可。Workspaceの公開設定を検証してください。':
+        '管理者未登録です。Usersシートに初期ADMINを登録してください。';
+    })
+    .withFailureHandler(function(){if(tab)tab.title='ログイン確認に失敗しました。'})
+    .checkWorkspaceIdentity();
+
+  if(!importButton)return;
+  importButton.onclick=function(){
+    importButton.disabled=true;
+    google.script.run.withSuccessHandler(function(result){
+      importButton.disabled=false;
+      const candidates=result&&result.candidates||[];
+      const old=document.getElementById('userImportDialog');
+      if(old)old.remove();
+      const overlay=document.createElement('div');
+      overlay.id='userImportDialog';
+      overlay.className='classification-dialog-overlay';
+      const dialog=document.createElement('section');
+      dialog.className='classification-dialog';
+      dialog.setAttribute('role','dialog');
+      dialog.setAttribute('aria-modal','true');
+      const header=document.createElement('div');
+      header.className='classification-dialog-header';
+      header.innerHTML='<div><h3>社内メンバーからユーザー登録</h3><small>選択した人を「一般ユーザー・有効」で追加します。</small></div>';
+      const cancel=document.createElement('button');
+      cancel.className='button';
+      cancel.type='button';
+      cancel.textContent='閉じる';
+      cancel.onclick=function(){overlay.remove()};
+      header.appendChild(cancel);
+      dialog.appendChild(header);
+      const body=document.createElement('div');
+      body.className='classification-dialog-body';
+      body.style.maxHeight='50vh';
+      body.style.overflowY='auto';
+      if(!candidates.length)body.textContent='取り込み可能なメンバーがいません（登録済み、無効、メール未設定、またはドメイン不一致）。';
+      candidates.forEach(function(m){
+        const label=document.createElement('label');
+        label.style.display='flex';
+        label.style.alignItems='center';
+        label.style.gap='8px';
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        checkbox.value=m.memberId;
+        checkbox.checked=true;
+        checkbox.style.width='auto';
+        label.appendChild(checkbox);
+        const name=document.createElement('span');
+        name.textContent=m.name+' / '+m.email;
+        label.appendChild(name);
+        body.appendChild(label);
+      });
+      dialog.appendChild(body);
+      const actions=document.createElement('div');
+      actions.className='classification-dialog-actions';
+      const submit=document.createElement('button');
+      submit.className='button primary';
+      submit.type='button';
+      submit.textContent='選択したメンバーを登録';
+      submit.disabled=!candidates.length;
+      submit.onclick=function(){
+        const ids=Array.from(body.querySelectorAll('input:checked')).map(function(el){return el.value});
+        if(!ids.length){window.alert('対象を選択してください。');return}
+        if(!window.confirm(ids.length+'名を一般ユーザーとして登録します。よろしいですか？'))return;
+        submit.disabled=true;
+        submit.textContent='登録中...';
+        google.script.run.withSuccessHandler(function(result){
+          overlay.remove();
+          masterState.data=masterState.data||{};
+          masterState.data.users=result.users||[];
+          masterState.selectedId=null;
+          masterState.creating=false;
+          renderMasterScreen();
+          window.alert((result.created||0)+'名を登録しました。');
+        }).withFailureHandler(function(error){
+          submit.disabled=false;
+          submit.textContent='選択したメンバーを登録';
+          window.alert('登録に失敗しました。'+(error&&error.message||error));
+        }).importMembersAsUsers({memberIds:ids});
+      };
+      actions.appendChild(submit);
+      dialog.appendChild(actions);
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+    }).withFailureHandler(function(error){
+      importButton.disabled=false;
+      window.alert('取り込み候補の取得に失敗しました。'+(error&&error.message||error));
+    }).previewMembersForUserImport();
+  };
+})();
+</script>
+

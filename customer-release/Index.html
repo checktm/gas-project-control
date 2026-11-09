@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <title><?= appConfig.appName ?></title>
+  <?!= include('CustomerStyles'); ?>
+  
+  
+  
+  
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div>
+        <div class="app-title"><?= appConfig.appName ?></div>
+        <div id="screenTitle" class="project-title">ダッシュボード</div>
+      </div>
+      <nav class="main-nav" aria-label="主要機能">
+        <button id="navDashboard" class="nav-button active">ダッシュボード</button>
+        <button id="navInquiries" class="nav-button">問い合わせ</button>
+        <button id="navMasters" class="nav-button">マスタ管理</button>
+      </nav>
+      <div id="dashboardSummary" class="project-summary">
+        <span>業務状況・デプロイ反映確認</span>
+      </div>
+      <div id="inquirySummary" class="project-summary hidden">
+        <span id="inquiryCountSummary">問い合わせ 0件</span>
+        <span id="unmatchedSummary">顧客未特定 0件</span>
+      </div>
+      <div id="masterSummary" class="project-summary hidden">
+        <span>顧客・担当者・メンバー・分類・設定</span>
+      </div>
+    </header>
+
+    <section id="dashboardView" class="screen-view dashboard-view">
+      <div class="dashboard-hero">
+        <div>
+          <h1>ダッシュボード</h1>
+          <p>問い合わせ対応とマスタの状態を、最初の画面でまとめて確認できます。</p>
+        </div>
+        <div class="dashboard-hero-actions">
+          <span id="mailImportState" class="dashboard-chip">メール自動取込：確認中</span>
+          <span id="dashboardStatus" class="dashboard-chip">読み込み待ち</span>
+          <button id="refreshDashboard" class="button subtle">更新</button>
+        </div>
+      </div>
+
+      <div class="dashboard-kpis">
+        <article class="dashboard-card dashboard-kpi">
+          <div class="dashboard-kpi-label">未完了問い合わせ</div>
+          <div id="dashOpen" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">新規・対応中・顧客回答待ち</div>
+        </article>
+        <article class="dashboard-card dashboard-kpi attention">
+          <div class="dashboard-kpi-label">新規</div>
+          <div id="dashNew" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">まだ対応開始していない問い合わせ</div>
+        </article>
+        <article class="dashboard-card dashboard-kpi attention">
+          <div class="dashboard-kpi-label">顧客未特定</div>
+          <div id="dashUnmatched" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">未特定・候補複数</div>
+        </article>
+        <article class="dashboard-card dashboard-kpi danger">
+          <div class="dashboard-kpi-label">期限超過</div>
+          <div id="dashOverdue" class="dashboard-kpi-value">0</div>
+          <div class="dashboard-kpi-note">未完了かつ対応期限を超過</div>
+        </article>
+      </div>
+
+      <div class="dashboard-main-grid">
+        <section class="dashboard-card dashboard-section">
+          <div class="dashboard-section-header">
+            <h2>最近の問い合わせ</h2>
+            <span>選択すると問い合わせ画面を開きます</span>
+          </div>
+          <div id="dashboardRecent" class="dashboard-recent"></div>
+          <div id="dashboardRecentEmpty" class="empty-state hidden"><strong>問い合わせはまだありません</strong></div>
+        </section>
+
+        <div class="dashboard-side-stack">
+          <section class="dashboard-card dashboard-section">
+            <div class="dashboard-section-header"><h2>マスタ登録状況</h2><span>有効件数</span></div>
+            <div class="dashboard-master-grid">
+              <div class="dashboard-master-item"><strong id="dashCustomers">0</strong><span>顧客</span></div>
+              <div class="dashboard-master-item"><strong id="dashContacts">0</strong><span>顧客担当者</span></div>
+              <div class="dashboard-master-item"><strong id="dashMembers">0</strong><span>社内メンバー</span></div>
+              <div class="dashboard-master-item"><strong id="dashCategories">0</strong><span>問い合わせ分類</span></div>
+            </div>
+          </section>
+
+          <section class="dashboard-card dashboard-section dashboard-build">
+            <div class="dashboard-section-header"><h2>デプロイ反映確認</h2><span>この画面のビルド</span></div>
+            <div class="dashboard-build-row"><div class="dashboard-build-label">Commit</div><div id="buildSha" class="dashboard-build-value">確認中</div></div>
+            <div class="dashboard-build-row"><div class="dashboard-build-label">Built at</div><div id="buildTime" class="dashboard-build-value">確認中</div></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="inquiryView" class="screen-view hidden">
+      <section class="toolbar inquiry-toolbar">
+        <div class="toolbar-group filters">
+          <input id="inquirySearch" class="search-input" type="search" placeholder="顧客名・問い合わせ概要・メール件名・送信元で検索">
+          <select id="inquiryStatusFilter">
+            <option value="all">状態：すべて</option>
+            <option value="NEW">新規</option>
+            <option value="IN_PROGRESS">対応中</option>
+            <option value="WAITING_CUSTOMER">顧客回答待ち</option>
+            <option value="RESOLVED">解決</option>
+            <option value="CLOSED">完了</option>
+          </select>
+          <select id="inquiryPriorityFilter">
+            <option value="all">優先度：すべて</option>
+            <option value="HIGH">高</option>
+            <option value="MEDIUM">中</option>
+            <option value="LOW">低</option>
+          </select>
+          <label class="checkbox-label"><input id="unmatchedOnly" type="checkbox"> 顧客未特定のみ</label>
+        </div>
+        <div class="toolbar-group toolbar-right">
+          <button id="reassessUnmatchedInquiries" class="button subtle">未特定を再判定</button>
+          <button id="refreshInquiries" class="button subtle">更新</button>
+        </div>
+      </section>
+
+      <main class="inquiry-layout">
+        <section class="inquiry-list-pane">
+          <div class="inquiry-list-header inquiry-row-grid">
+            <div>受信</div><div>顧客</div><div>問い合わせ概要</div><div>担当</div><div>状態</div><div>期限</div>
+          </div>
+          <div id="inquiryRows" class="inquiry-list-body"></div>
+          <div id="inquiryEmpty" class="empty-state hidden">
+            <strong>問い合わせはまだありません</strong>
+            <span>メール取込を有効にすると、ここに自動登録されます。</span>
+          </div>
+        </section>
+
+        <aside id="inquiryDetail" class="inquiry-detail-pane">
+          <div id="inquiryDetailEmpty" class="detail-empty">
+            <div class="detail-empty-icon">✉</div>
+            <strong>問い合わせを選択してください</strong>
+            <span>一覧から問い合わせを選ぶと、メール履歴と管理情報を確認できます。</span>
+          </div>
+          <div id="inquiryDetailContent" class="hidden">
+            <div class="inquiry-detail-header">
+              <div>
+                <div class="panel-kicker">問い合わせ</div>
+                <h2 id="inquiryDetailSubject"></h2>
+                <div id="inquiryDetailMeta" class="detail-meta"></div>
+              </div>
+              <span id="customerMatchBadge" class="match-badge"></span>
+            </div>
+
+            <form id="inquiryForm" class="inquiry-form">
+              <div class="form-two-columns">
+                <label>顧客<select id="inquiryCustomerInput"></select></label>
+                <label>顧客担当者<select id="inquiryContactInput"></select></label>
+              </div>
+              <div class="form-three-columns">
+                <label>状態<select id="inquiryStatusInput"></select></label>
+                <label>優先度<select id="inquiryPriorityInput"></select></label>
+                <label>自社担当<select id="inquiryAssigneeInput"></select></label>
+              </div>
+              <div class="form-two-columns">
+                <label>分類<select id="inquiryCategoryInput"></select></label>
+                <label>対応期限<input id="inquiryDueDateInput" type="date"></label>
+              </div>
+              <label>問い合わせ概要<textarea id="inquirySummaryInput" rows="2" placeholder="メール件名に依存せず、この問い合わせの内容が分かるように記載"></textarea></label>
+              <label>次回対応<textarea id="inquiryNextActionInput" rows="2" placeholder="次に行う対応"></textarea></label>
+              <div id="inquiryFormMessage" class="form-message"></div>
+              <div class="panel-actions inquiry-actions">
+                <span id="inquiryUpdatedAt" class="updated-label"></span>
+                <button type="submit" id="saveInquiryButton" class="button primary">保存</button>
+              </div>
+            </form>
+
+            <section class="message-section">
+              <div class="section-heading">
+                <h3>メール履歴</h3>
+                <span id="messageCount"></span>
+              </div>
+              <div id="inquiryMessages" class="message-list"></div>
+            </section>
+          </div>
+        </aside>
+      </main>
+    </section>
+
+    <section id="masterView" class="screen-view hidden">
+      <main class="master-layout">
+        <aside class="master-menu">
+          <div class="master-menu-title">マスタ管理</div>
+          <button class="master-tab active" data-master-type="customers">顧客</button>
+          <button class="master-tab" data-master-type="contacts">顧客担当者</button>
+          <button class="master-tab" data-master-type="members">社内メンバー</button>
+          <button class="master-tab" data-master-type="categories">問い合わせ分類</button>
+          <button class="master-tab" data-master-type="settings">システム設定</button>
+          <button class="master-tab hidden" id="usersMasterTab" data-master-type="users">ユーザー</button>
+        </aside>
+
+        <section class="master-list-pane">
+          <div class="master-list-toolbar">
+            <div>
+              <div id="masterListTitle" class="master-list-title">顧客</div>
+              <div id="masterListDescription" class="master-list-description">問い合わせ送信者を顧客へ紐付けるための会社・組織を管理します。</div>
+            </div>
+            <div class="toolbar-group"><button id="importMembersAsUsersButton" type="button" class="button hidden">社内メンバーから追加</button><button id="newMasterButton" class="button primary">＋ 新規登録</button></div>
+          </div>
+          <div class="master-search-row">
+            <input id="masterSearch" class="search-input" type="search" placeholder="検索">
+            <label class="checkbox-label"><input id="showInactiveMasters" type="checkbox"> 無効も表示</label>
+          </div>
+          <div id="masterRows" class="master-rows"></div>
+          <div id="masterEmpty" class="empty-state hidden"><strong>データがありません</strong></div>
+        </section>
+
+        <aside class="master-editor-pane">
+          <div id="masterEditorEmpty" class="detail-empty">
+            <strong>項目を選択してください</strong>
+            <span>一覧から選ぶか、新規登録を押してください。</span>
+          </div>
+          <form id="masterForm" class="master-form hidden">
+            <div class="master-editor-header">
+              <div>
+                <div class="panel-kicker">マスタ編集</div>
+                <h2 id="masterEditorTitle">新規登録</h2>
+              </div>
+            </div>
+            <div id="masterFields" class="master-fields"></div>
+            <div id="masterFormMessage" class="form-message"></div>
+            <div class="panel-actions">
+              <span id="masterEditorHint" class="updated-label"></span>
+              <button type="submit" id="saveMasterButton" class="button primary">保存</button>
+            </div>
+          </form>
+        </aside>
+      </main>
+    </section>
+  </div>
+
+  <script>
+    window.APP_CONFIG_CLIENT = {
+      buildSha: '<?= appConfig.buildSha ?>',
+      buildTime: '<?= appConfig.buildTime ?>'
+    };
+  </script>
+  <?!= include('CustomerScripts'); ?>
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+</body>
+</html>
