@@ -1,0 +1,53 @@
+name: Update Customer Release Folder
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'scripts/build_compact_customer.py'
+      - '.github/workflows/update-customer-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-customer-release
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Generate compact source
+        run: |
+          set -euo pipefail
+          python scripts/build_compact_customer.py --src src --dest /tmp/customer-compact
+          mkdir -p customer-release
+          cp /tmp/customer-compact/Index.html customer-release/Index.html
+          cp /tmp/customer-compact/CustomerBackend.gs customer-release/CustomerBackend.gs
+          cp /tmp/customer-compact/CustomerStyles.html customer-release/CustomerStyles.html
+          cp /tmp/customer-compact/CustomerScripts.html customer-release/CustomerScripts.html
+          # Code.gs / DeploymentSecrets.gs / manifest are intentionally excluded:
+          # customer-specific settings must not be overwritten.
+
+      - name: Commit generated customer files
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add customer-release/Index.html customer-release/CustomerBackend.gs customer-release/CustomerStyles.html customer-release/CustomerScripts.html
+          if git diff --cached --quiet; then
+            echo "Customer source is already current."
+            exit 0
+          fi
+          git commit -m "chore: update browsable customer release source"
+          git pull --rebase origin main
+          git push origin HEAD:main
