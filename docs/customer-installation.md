@@ -219,3 +219,19 @@ AI要約を有効化する場合は、APIキーの所有者・利用料・秘密
 **通常の更新**は原則 `CustomerBackend.gs`、`CustomerStyles.html`、`CustomerScripts.html` の3ファイルと、必要に応じて`Index.html`だけを更新する。
 
 **注意**：`src/` と `compact/` を同時にGASへ入れてはならない。二重定義によるエラーの原因となる。また、統合版は自動デプロイやOAuth権限緩和を行うものではない。既存のユーザーアクセス制御機能は別途未完了の箇所があるため、統合によって認証が強化されるわけではない。
+
+
+## 11. GitHubフォルダから直接コピーする方式（推奨）
+
+最新の統合版はGitHubの [customer-release/](../customer-release/) から直接参照可能。ZIPの取得・展開は不要。
+
+- [CustomerBackend.gs](../customer-release/CustomerBackend.gs)
+- [CustomerScripts.html](../customer-release/CustomerScripts.html)
+- [CustomerStyles.html](../customer-release/CustomerStyles.html)
+- [Index.html](../customer-release/Index.html)
+
+更新用GitHub Actions: `.github/workflows/update-customer-release.yml`。`src/`またはビルダーの変更時に生成してmainにコミットする。
+
+初回の統合版への移行は上記「10. コピー作業を減らす統合版」を参照。特に旧個別GSとの二重定義を防ぐこと。顧客環境の`Code.gs`、`DeploymentSecrets.gs`、`appsscript.json`は上書きしない。
+
+従来の `Build Customer Package` は残すが、通常の手動更新では`customer-release/`を使う。
