@@ -2092,3 +2092,138 @@ switchMainView('dashboard');
 })();
 </script>
 
+<!-- bundled from HelpGuide.html -->
+<style>
+/* 画面操作を妨げない右側ヘルプパネル */
+.help-launch{margin-left:8px;white-space:nowrap;border:1px solid #b9c9e0;background:#eef4ff;color:#1e40af;border-radius:8px;padding:7px 12px;font-weight:700;cursor:pointer}
+.help-launch:hover{background:#dce9ff}
+.help-overlay{position:fixed;inset:0;z-index:5000;background:rgba(15,23,42,.36);display:flex;justify-content:flex-end}
+.help-panel{width:min(600px,100%);height:100%;background:#fff;box-shadow:-12px 0 36px rgba(15,23,42,.18);display:flex;flex-direction:column;color:#1f2937}
+.help-header{padding:17px 20px 13px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.help-header h2{font-size:19px;margin:0}.help-header p{font-size:12px;color:#64748b;margin:4px 0 0}
+.help-close{border:1px solid #d1d5db;border-radius:8px;background:#fff;padding:7px 12px;cursor:pointer}
+.help-topics{display:flex;flex-wrap:wrap;gap:6px;padding:12px 20px;border-bottom:1px solid #e2e8f0}
+.help-topic{border:1px solid #d4deee;background:white;color:#475569;border-radius:7px;padding:7px 10px;cursor:pointer;font-size:12px}
+.help-topic.active{background:#e7efff;border-color:#93b4ed;color:#1d4ed8;font-weight:700}
+.help-content{overflow-y:auto;padding:16px 23px 30px;line-height:1.65;font-size:13px}
+.help-content h3{font-size:17px;margin:0 0 9px}.help-content h4{font-size:14px;margin:19px 0 6px;color:#1e3a8a}
+.help-content ol,.help-content ul{padding-left:22px;margin:6px 0 12px}
+.help-content li{margin:4px 0}
+.help-content p{margin:5px 0 12px}
+.help-content .help-note{background:#f1f5f9;border-left:3px solid #94a3b8;padding:9px 12px;margin:14px 0;border-radius:4px}
+.help-content .help-setting{border-bottom:1px solid #e2e8f0;padding:8px 0}
+.help-content .help-setting strong{display:block;color:#1e3a8a;font-size:12px}
+.help-content .help-setting span{display:block;color:#334155}
+.help-content code{font-family:monospace;background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:12px}
+@media(max-width:760px){.help-launch{padding:6px 9px}.help-content{padding:13px 15px}.help-header,.help-topics{padding-left:14px;padding-right:14px}}
+</style>
+<script>
+(function(){
+  const subjects=[
+    {key:'overview',name:'はじめに',title:'アプリの使い方',body:`
+      <p>このシステムは、問い合わせメールの取込・対応管理・返信と、顧客や担当者などのマスタ管理を行います。</p>
+      <h4>最初に行うこと</h4><ol>
+      <li>「マスタ管理」で顧客・顧客担当者・社内メンバーを登録します。</li>
+      <li>「システム設定」で受付アドレス、自社ドメイン、メール検索条件を確認します。</li>
+      <li>「問い合わせ」で「メール取込」を実行し、対象メールが取り込まれることを確認します。</li>
+      <li>取り込んだ問い合わせを開き、担当・状態・期限などを設定します。</li></ol>
+      <div class="help-note">自動取込には、管理者によるGAS側の取込トリガー設定が別途必要です。設定を有効にしただけでは定期処理は始まりません。</div>`},
+    {key:'inquiries',name:'問い合わせ管理',title:'問い合わせ管理の操作',body:`
+      <h4>1. メールを取り込む</h4>
+      <ol><li>「問い合わせ」画面を開きます。</li><li>一覧上部の「メール取込」を押します。</li><li>取込件数を確認し、必要に応じて「更新」します。</li></ol>
+      <p>同じGmailメッセージは重複登録されないように処理します。自動取込が無効でも、手動のメール取込は実行できます。</p>
+      <h4>2. 問い合わせを確認・更新する</h4>
+      <ol><li>一覧から問い合わせを選びます。検索や状態・優先度で絞り込めます。</li><li>「管理情報」で顧客、顧客担当者、状態、優先度、社内担当、分類、対応期限、概要、次回対応を編集します。</li><li>「保存」で変更を確定します。</li></ol>
+      <h4>3. 顧客未特定の場合</h4>
+      <p>送信元を特定できない場合は「顧客未特定」となります。「管理情報」「メール対応」付近の「＋ 顧客登録」「＋ 担当者登録」から登録できます。顧客を作っただけでは顧客担当者は自動作成されません。</p>
+      <h4>4. AIで要約する</h4>
+      <p>「管理情報」の「AIで要約」で概要候補を作成します。結果を確認・修正し、「保存」を押してください。既存の概要がある場合は上書き確認を行います。</p>
+      <h4>5. 対象外のメールを除く</h4>
+      <p>一覧の顧客未特定行をチェックし、「選択を対象外」を使います。これは問い合わせ単位の削除ではなく、<strong>送信元ドメインを対象外設定に加える処理</strong>です。同じドメインの別問い合わせにも影響します。</p>
+      <div class="help-note">問い合わせが見当たらない場合は、絞り込み・対象外ドメイン・メール検索条件・取込結果を確認してください。</div>`},
+    {key:'mail',name:'メール対応',title:'メール履歴と返信',body:`
+      <h4>履歴を見る</h4><p>問い合わせを開き、右側の「メール対応」を選ぶと受信・返信の履歴を確認できます。</p>
+      <h4>返信する</h4><ol>
+      <li>「メール対応」で「返信」を押します。</li><li>返信ダイアログで最新受信メールの返信先（To）、CC、件名を確認します。</li><li>本文を入力します。「AI返信案」を使う場合も、内容を必ず確認・修正してください。</li><li>「返信を送信」を押し、確認後に送信します。</li></ol>
+      <p>返信はGmail上の元スレッドに紐付きます。返信の送信だけでは問い合わせの状態は変わりません。</p>
+      <div class="help-note">AI返信案は自動送信されません。誤送信防止のため宛先・CC・本文を確認してください。AI機能にはGeminiの設定が必要です。</div>`},
+    {key:'customers',name:'顧客・担当者',title:'顧客と顧客担当者マスタ',body:`
+      <h4>顧客マスタ</h4><ol><li>「マスタ管理 → 顧客」を開きます。</li><li>「＋ 新規登録」から顧客名、メールドメイン、状態、備考を入力します。</li><li>保存します。既存の顧客は一覧から選んで編集できます。</li></ol>
+      <p><strong>メールドメイン：</strong>例 <code>example.co.jp</code>。受信者を顧客候補として判定する際に使います。複数会社に同じドメインを設定すると一意に特定できない場合があります。</p>
+      <h4>顧客担当者マスタ</h4><ol><li>「マスタ管理 → 顧客担当者」を開きます。</li><li>顧客、担当者名、メールアドレス、電話番号、有効状態を登録します。</li><li>保存します。</li></ol>
+      <p>担当者のメールアドレス完全一致は、顧客判定に使用します。無効化すると新しい判定候補から外れます。</p>
+      <div class="help-note">顧客担当者は外部の連絡先です。システムへのログイン権限を付与する「ユーザー」とは異なります。</div>`},
+    {key:'members',name:'社内メンバー・分類',title:'社内メンバーと分類',body:`
+      <h4>社内メンバー</h4><ol><li>「マスタ管理 → 社内メンバー」を開きます。</li><li>メンバー名・メールアドレス・表示順・有効状態を登録します。</li><li>保存すると問い合わせの「社内担当」に選択できます。</li></ol>
+      <p>登録したメールアドレスは、自社送信メールの判定にも利用されます。社内メンバーに登録するだけではシステムへのログイン権限は付きません。</p>
+      <h4>問い合わせ分類</h4><p>「マスタ管理 → 問い合わせ分類」で分類名、表示順、有効状態を設定します。問い合わせ編集画面で分類を選べるようになります。</p>
+      <p>過去の履歴を保つため、不要になったマスタは削除ではなく無効化してください。</p>`},
+    {key:'users',name:'ユーザー管理',title:'ユーザーの登録と権限',body:`
+      <h4>ユーザー登録</h4><p>「マスタ管理 → ユーザー」でGoogle Workspaceのメールアドレス、ユーザー名、権限、有効状態、社内メンバーとの紐付けを編集します。</p>
+      <h4>社内メンバーから登録</h4><p>「社内メンバーから追加」から対象者を選択すると、一般ユーザー（USER）として登録できます。登録済みのユーザーは重複追加しません。</p>
+      <h4>権限</h4><p><code>ADMIN</code> はユーザー管理を実行でき、<code>USER</code> は一般利用者です。初期管理者は管理者がUsersシートへ事前登録する必要があります。</p>
+      <div class="help-note">重要：現在のユーザマスタ機能は実装途中です。全業務APIへのアクセス拒否とGoogle Workspaceの本人識別検証は完了していません。ユーザマスタ登録だけでアクセス制御が完成したとはみなさないでください。</div>`},
+    {key:'settings',name:'システム設定',title:'システム設定の内容',body:`
+      <p>「マスタ管理 → システム設定」で各項目を選び、右側で編集・保存します。</p>
+      <div class="help-setting"><strong>問い合わせ受付アドレス（INQUIRY_GROUP_ADDRESS）</strong><span>問い合わせを受けるメールアドレス。複数の場合はカンマ・改行・セミコロンで区切ります。</span></div>
+      <div class="help-setting"><strong>メール検索条件（MAIL_SEARCH_QUERY）</strong><span>Gmailの検索式。例：<code>to:{GROUP_ADDRESS} newer_than:30d</code>。<code>{GROUP_ADDRESS}</code> は受付アドレスに展開されます。</span></div>
+      <div class="help-setting"><strong>1回の最大スレッド数（MAIL_IMPORT_MAX_THREADS）</strong><span>取込時に調べる最大Gmailスレッド数。1〜500で指定します。大きくすると取込時間も増えます。</span></div>
+      <div class="help-setting"><strong>メール自動取込（MAIL_IMPORT_ENABLED）</strong><span><code>TRUE</code> で定期トリガーからの取込を許可します。別途トリガーの設置が必要です。手動の「メール取込」はこの設定にかかわらず実行可能です。</span></div>
+      <div class="help-setting"><strong>自社メールドメイン（INTERNAL_MAIL_DOMAINS）</strong><span>自社が送ったメールを判定するドメイン。例：<code>example.co.jp</code>。複数指定できます。</span></div>
+      <div class="help-setting"><strong>問い合わせ対象外ドメイン（INQUIRY_EXCLUDED_DOMAINS）</strong><span>一覧・ダッシュボードに表示しない送信元ドメイン。サブドメインも対象です。除外しても問い合わせデータ自体は削除されません。</span></div>
+      <h4>管理者向け：GAS側の設定</h4><p>Gmail取込トリガーは顧客の運用アカウントで <code>installInquiryMailImportTrigger()</code> を実行して設定します。AIを使用する場合は、APIキー管理と <code>GEMINI_AI_ENABLED</code> 等の設定も別途必要です。画面上で編集できる設定は上記6項目です。</p>
+      <div class="help-note">検索条件を広げると想定外のメールが入ることがあります。設定変更後は手動取込で対象を確認してください。</div>`}
+  ];
+  const byKey=Object.fromEntries(subjects.map(x=>[x.key,x]));
+  let selected='overview';
+  let opener=null;
+  const button=document.createElement('button');
+  button.type='button';button.className='help-launch';button.id='openHelpGuide';button.textContent='？ 使い方';button.title='操作手順と設定ガイドを開く';
+  const header=document.querySelector('.app-header');
+  if(!header)return;
+  header.appendChild(button);
+  let overlay;
+  function chooseDefault(){
+    const master=document.getElementById('masterView');
+    const inquiry=document.getElementById('inquiryView');
+    if(master&&!master.classList.contains('hidden')){
+      return (typeof masterState!=='undefined'&&byKey[masterState.type])?masterState.type:'customers';
+    }
+    if(inquiry&&!inquiry.classList.contains('hidden'))return 'inquiries';
+    return 'overview';
+  }
+  function render(){
+    if(!overlay)return;
+    const tabs=overlay.querySelector('.help-topics');
+    tabs.replaceChildren();
+    subjects.forEach(function(s){
+      const tab=document.createElement('button');tab.type='button';tab.className='help-topic'+(s.key===selected?' active':'');tab.textContent=s.name;tab.setAttribute('aria-pressed',s.key===selected?'true':'false');
+      tab.onclick=function(){selected=s.key;render()};
+      tabs.appendChild(tab);
+    });
+    const subject=byKey[selected]||subjects[0];
+    overlay.querySelector('.help-content').innerHTML='<h3>'+subject.title+'</h3>'+subject.body;
+    overlay.querySelector('.help-content').scrollTop=0;
+  }
+  function close(){
+    if(!overlay)return;
+    overlay.remove();overlay=null;
+    document.removeEventListener('keydown',onKey);
+    if(opener)opener.focus();
+  }
+  function onKey(e){if(e.key==='Escape'){e.preventDefault();close()}}
+  button.onclick=function(){
+    if(overlay){close();return}
+    opener=document.activeElement;
+    selected=chooseDefault();
+    overlay=document.createElement('div');overlay.className='help-overlay';
+    overlay.innerHTML='<section class="help-panel" role="dialog" aria-modal="true" aria-labelledby="helpPanelTitle"><header class="help-header"><div><h2 id="helpPanelTitle">使い方・設定ガイド</h2><p>画面に応じた手順や設定の説明を確認できます</p></div><button class="help-close" type="button">閉じる ×</button></header><nav class="help-topics" aria-label="ヘルプ項目"></nav><div class="help-content" tabindex="0"></div></section>';
+    document.body.appendChild(overlay);
+    overlay.querySelector('.help-close').onclick=close;
+    overlay.addEventListener('click',function(e){if(e.target===overlay)close()});
+    document.addEventListener('keydown',onKey);
+    render();overlay.querySelector('.help-close').focus();
+  };
+})();
+</script>
+
